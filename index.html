@@ -524,6 +524,7 @@ function initOS(){
   renderDesktopIcons();
   renderTaskbarApps();
   renderStartMenu();
+  initStartButton();
   initClock();
   initDesktopSearch();
   initContextMenu();
@@ -764,15 +765,6 @@ function renderStartMenu(){
     showPowerMenu(e);
   });
 
-  document.getElementById("btn-start").addEventListener("click", (e) => {
-    e.stopPropagation();
-    sm.classList.toggle("open");
-    if(sm.classList.contains("open")){
-      const smInput = sm.querySelector(".sm-search input");
-      if(smInput) setTimeout(() => smInput.focus(), 50);
-    }
-  });
-
   // Cegah klik di dalam start menu (termasuk search box) menutup menu lewat global click handler
   sm.addEventListener("click", (e) => e.stopPropagation());
 
@@ -790,6 +782,21 @@ function renderStartMenu(){
       if(e.key === "Escape") closeStartMenu();
     });
   }
+}
+
+// Binding tombol Start hanya dipasang SEKALI saat boot (bukan di dalam renderStartMenu,
+// yang bisa dipanggil berkali-kali misalnya setelah update/patch versi — memasangnya di sana
+// akan menumpuk banyak event listener dan membuat toggle open/close jadi tidak konsisten).
+function initStartButton(){
+  const sm = document.getElementById("start-menu");
+  document.getElementById("btn-start").addEventListener("click", (e) => {
+    e.stopPropagation();
+    sm.classList.toggle("open");
+    if(sm.classList.contains("open")){
+      const smInput = sm.querySelector(".sm-search input");
+      if(smInput) setTimeout(() => smInput.focus(), 50);
+    }
+  });
 }
 function closeStartMenu(){ document.getElementById("start-menu").classList.remove("open"); }
 
