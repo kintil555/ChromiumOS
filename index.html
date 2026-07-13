@@ -392,18 +392,17 @@
    ============================================================ */
 
 const OS = {
-  version: "Build 25H1.0042",
-  nextBuild: "Build 25H2.0117",
-  // Riwayat build resmi Chromium OS — dipakai oleh PyPatcher untuk downgrade/upgrade/loncat versi.
-  // "features" adalah snapshot kemampuan sistem pada build tsb (dipakai PyPatcher, bukan file terpisah).
+  // Riwayat build resmi Chromium OS — dipakai oleh PyPatcher & menu Update untuk downgrade/upgrade/loncat versi.
+  // "features" adalah snapshot kemampuan sistem pada build tsb (dipakai gating fitur di seluruh OS).
+  // Build aktif saat ini ditentukan oleh OS.settings.currentBuildId (lihat getCurrentBuild()).
   buildHistory: [
     { id:"initial", label:"Build Awal (Initial Release)", version:"Build 22H1.0001",
       features:{ draggableSearch:false, roundedUI:false, hideableDesktopApps:false, browStore:false, customWallpaper:false, desktopWidgets:false } },
     { id:"24h2", label:"Build 24H2.1103", version:"Build 24H2.1103",
       features:{ draggableSearch:true, roundedUI:true, hideableDesktopApps:true, browStore:false, customWallpaper:false, desktopWidgets:false } },
-    { id:"25h1", label:"Build 25H1.0042 (saat ini)", version:"Build 25H1.0042",
-      features:{ draggableSearch:true, roundedUI:true, hideableDesktopApps:true, browStore:true, customWallpaper:true, desktopWidgets:true } },
-    { id:"25h2", label:"Build 25H2.0117 (preview)", version:"Build 25H2.0117",
+    { id:"25h1", label:"Build 25H1.0042", version:"Build 25H1.0042",
+      features:{ draggableSearch:true, roundedUI:true, hideableDesktopApps:true, browStore:false, customWallpaper:false, desktopWidgets:false } },
+    { id:"25h2", label:"Build 25H2.0117", version:"Build 25H2.0117",
       features:{ draggableSearch:true, roundedUI:true, hideableDesktopApps:true, browStore:true, customWallpaper:true, desktopWidgets:true } },
   ],
   zTop: 100,
@@ -422,7 +421,8 @@ const OS = {
     hiddenApps: {},
     searchPos: null, // {top,left} custom
     desktopWidgets: [], // { id, type: 'clock-digital'|'clock-analog'|'weather', x, y }
-    installedApps: {} // appId -> true, apps installed via BrowStore
+    installedApps: {}, // appId -> true, apps installed via BrowStore
+    currentBuildId: "25h1" // id dari OS.buildHistory yang sedang aktif — diubah oleh PyPatcher/Update
   },
   apps: [
     { id:"browser", name:"Chromium Browser", icon:"🌐", pinned:true },
@@ -430,7 +430,6 @@ const OS = {
     { id:"settings", name:"Settings", icon:"⚙️", pinned:true },
     { id:"notes", name:"Notes", icon:"📝", pinned:true },
     { id:"terminal", name:"Terminal", icon:"⌥", pinned:false },
-    { id:"browstore", name:"BrowStore", icon:"🛍️", pinned:true },
     { id:"about", name:"About This OS", icon:"ℹ️", pinned:false },
   ]
 };
@@ -451,6 +450,23 @@ const BROWSTORE_CATALOG = [
   }
 ];
 
+/* ============================================================
+   VERSION / FEATURE GATING
+   Sumber kebenaran versi aktif adalah OS.settings.currentBuildId,
+   yang menunjuk ke salah satu entri di OS.buildHistory. PyPatcher
+   dan menu Update sama-sama mengubah nilai ini.
+   ============================================================ */
+function getCurrentBuild(){
+  return OS.buildHistory.find(b => b.id === OS.settings.currentBuildId) || OS.buildHistory[0];
+}
+function getActiveVersionString(){
+  return getCurrentBuild().version;
+}
+function isFeatureUnlocked(featureName){
+  const build = getCurrentBuild();
+  return !!(build.features && build.features[featureName]);
+}
+
 function restoreInstalledApps(){
   Object.keys(OS.settings.installedApps || {}).forEach(appId => {
     if(OS.settings.installedApps[appId] && !OS.apps.find(a => a.id === appId)){
@@ -458,6 +474,18 @@ function restoreInstalledApps(){
       if(catalogApp) OS.apps.push({ id: catalogApp.id, name: catalogApp.name, icon: catalogApp.icon, pinned:false });
     }
   });
+}
+
+// BrowStore hanya tersedia kalau fitur "browStore" aktif di build saat ini.
+// Dipanggil saat boot dan setiap kali build/versi berubah (update / PyPatcher).
+function syncBrowStoreAppVisibility(){
+  const unlocked = isFeatureUnlocked("browStore");
+  const exists = OS.apps.find(a => a.id === "browstore");
+  if(unlocked && !exists){
+    OS.apps.push({ id:"browstore", name:"BrowStore", icon:"🛍️", pinned:true });
+  } else if(!unlocked && exists){
+    OS.apps = OS.apps.filter(a => a.id !== "browstore");
+  }
 }
 
 /* ---------- persistence (in-memory only, per spec no localStorage in artifacts sometimes ok in plain HTML, but we keep it in-memory to be safe) ---------- */
@@ -492,6 +520,7 @@ window.addEventListener("DOMContentLoaded", () => {
 function initOS(){
   applySettingsToDOM();
   restoreInstalledApps();
+  syncBrowStoreAppVisibility();
   renderDesktopIcons();
   renderTaskbarApps();
   renderStartMenu();
@@ -500,7 +529,7 @@ function initOS(){
   initContextMenu();
   initGlobalClicks();
   renderDesktopWidgets();
-  toast("Selamat datang", `Chromium OS ${OS.version} siap digunakan.`, "👋");
+  toast("Selamat datang", `Chromium OS ${getActiveVersionString()} siap digunakan.`, "👋");
 }
 
 /* ============ CLOCK ============ */
@@ -781,6 +810,13 @@ function rebootOS(){
   OS.windows = {};
   setTimeout(() => {
     boot.classList.add("hide");
+    // Sinkronkan ulang fitur/apps sesuai build aktif (penting setelah update/patch versi)
+    syncBrowStoreAppVisibility();
+    applySettingsToDOM();
+    renderDesktopIcons();
+    renderTaskbarApps();
+    renderStartMenu();
+    renderDesktopWidgets();
     toast("Restart selesai", "Chromium OS telah dimulai ulang.", "🔄");
   }, 1800);
 }
@@ -1028,9 +1064,21 @@ function openApp(appId, opts={}){
   if(appId === "files") return openFiles();
   if(appId === "notes") return openNotes();
   if(appId === "terminal") return openTerminal();
-  if(appId === "browstore") return openBrowStore();
+  if(appId === "browstore"){
+    if(!isFeatureUnlocked("browStore")){
+      toast("Fitur terkunci", "BrowStore memerlukan update sistem ke build yang mendukungnya.", "🔒");
+      return;
+    }
+    return openBrowStore();
+  }
   if(appId === "pypatcher") return openPyPatcher();
-  if(appId === "widgets") return openWidgetsApp();
+  if(appId === "widgets"){
+    if(!isFeatureUnlocked("desktopWidgets")){
+      toast("Fitur terkunci", "Widget desktop memerlukan update sistem ke build yang mendukungnya.", "🔒");
+      return;
+    }
+    return openWidgetsApp();
+  }
   if(appId === "about") return openAbout();
 }
 
@@ -1408,10 +1456,16 @@ function renderPreferenceSettings(content){
         </div>
       `).join("")}
     </div>
-    <div style="display:flex; gap:8px; margin:0 0 16px;">
-      <input id="custom-wp-url" type="text" placeholder="Tempel URL gambar (https://...)" style="flex:1; padding:9px 12px; border-radius:8px; border:1px solid var(--taskbar-border); background:transparent; color:var(--text-primary); font-size:12px; outline:none;">
-      <button id="btn-add-wp" style="padding:9px 16px; border-radius:8px; border:none; background:var(--accent); color:#08202b; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">+ Tambah</button>
-    </div>
+    ${isFeatureUnlocked("customWallpaper") ? `
+      <div style="display:flex; gap:8px; margin:0 0 16px;">
+        <input id="custom-wp-url" type="text" placeholder="Tempel URL gambar (https://...)" style="flex:1; padding:9px 12px; border-radius:8px; border:1px solid var(--taskbar-border); background:transparent; color:var(--text-primary); font-size:12px; outline:none;">
+        <button id="btn-add-wp" style="padding:9px 16px; border-radius:8px; border:none; background:var(--accent); color:#08202b; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">+ Tambah</button>
+      </div>
+    ` : `
+      <div style="margin:0 0 16px; padding:10px 12px; border-radius:10px; background:rgba(128,128,128,0.12); font-size:11.5px; color:var(--text-secondary); line-height:1.6;">
+        🔒 Wallpaper custom via URL memerlukan update sistem. Buka Settings &gt; Update untuk memeriksa build terbaru.
+      </div>
+    `}
 
     ${settingsRow("Transparansi jendela (" + Math.round(OS.settings.transparency*100) + "%)", "Atur tingkat transparansi kaca (mica) pada jendela dan taskbar.",
       `<input type="range" id="rng-transparency" min="0" max="100" step="5" value="${Math.round(OS.settings.transparency*100)}" style="width:180px; accent-color:var(--accent);">`
@@ -1451,7 +1505,8 @@ function renderPreferenceSettings(content){
       renderPreferenceSettings(content);
     });
   });
-  content.querySelector("#btn-add-wp").addEventListener("click", () => {
+  const btnAddWp = content.querySelector("#btn-add-wp");
+  if(btnAddWp) btnAddWp.addEventListener("click", () => {
     const input = content.querySelector("#custom-wp-url");
     const url = input.value.trim();
     if(!url){ toast("URL kosong", "Masukkan URL gambar terlebih dahulu.", "⚠️"); return; }
@@ -1471,66 +1526,114 @@ function renderPreferenceSettings(content){
   });
 }
 
-/* ---------- UPDATE (gimmick) ---------- */
+/* ---------- UPDATE ---------- */
+// Fitur yang muncul di changelog per build (dibandingkan build sebelumnya di buildHistory)
+const BUILD_CHANGELOG = {
+  "24h2": [
+    "Pencarian desktop kini bisa digeser (draggable)",
+    "Antarmuka jendela & taskbar bersudut lebih membulat",
+    "Aplikasi desktop kini dapat disembunyikan"
+  ],
+  "25h1": [
+    "Perbaikan: pencarian tidak lagi menutup Start Menu secara tidak sengaja",
+    "Pencarian situs kini selalu terbuka di dalam jendela Browser OS, bukan tab asli",
+    "Peningkatan stabilitas umum"
+  ],
+  "25h2": [
+    "Wallpaper custom via URL gambar",
+    "BrowStore — instal aplikasi resmi: PyPatcher & Widget",
+    "Widget desktop: jam digital, jam analog minimalis, panel cuaca"
+  ]
+};
+
 function renderUpdateSettings(content){
-  const alreadyUpdated = OS.settings._updated;
+  const current = getCurrentBuild();
+  const others = OS.buildHistory.filter(b => b.id !== current.id);
+  const newerAvailable = OS.buildHistory[OS.buildHistory.length - 1].id !== current.id;
+
   content.innerHTML = `
     <h2 style="margin:0 0 4px;">Update</h2>
-    <p style="color:var(--text-secondary); font-size:12.5px; margin:0 0 18px;">Periksa dan instal pembaruan sistem terbaru.</p>
+    <p style="color:var(--text-secondary); font-size:12.5px; margin:0 0 18px;">Periksa versi sistem saat ini, atau pilih build lain untuk dipatch (upgrade / downgrade).</p>
 
     <div style="border:1px solid var(--taskbar-border); border-radius:14px; padding:20px;">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div>
-          <div style="font-size:13.5px; font-weight:600;">Chromium OS ${alreadyUpdated ? OS.nextBuild : OS.version}</div>
-          <div style="font-size:11.5px; color:var(--text-secondary); margin-top:3px;">${alreadyUpdated ? "Sistem Anda sudah yang terbaru." : "Build terbaru tersedia untuk diunduh."}</div>
+          <div style="font-size:13.5px; font-weight:600;">Chromium OS ${current.version}</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); margin-top:3px;">${current.label}${newerAvailable ? "" : " · Build terbaru"}</div>
         </div>
-        <div style="font-size:26px;">${alreadyUpdated ? "✅" : "⬇️"}</div>
+        <div style="font-size:26px;">${newerAvailable ? "⬇️" : "✅"}</div>
       </div>
 
-      ${!alreadyUpdated ? `
-        <div id="update-progress-wrap" style="display:none; margin-top:18px;">
+      <div style="margin-top:18px; padding-top:16px; border-top:1px solid var(--taskbar-border);">
+        <div style="font-size:11.5px; font-weight:600; margin-bottom:8px; color:var(--text-secondary);">Pilih build tujuan</div>
+        <div style="display:flex; gap:8px;">
+          <select id="sel-update-build" style="flex:1; padding:10px 12px; border-radius:10px; border:1px solid var(--taskbar-border); background:var(--window-bg); color:var(--text-primary); font-size:12.5px; outline:none;">
+            ${others.map(b => `<option value="${b.id}">${b.label}</option>`).join("")}
+          </select>
+        </div>
+
+        <div id="update-changelog" style="margin-top:14px; font-size:11.5px; color:var(--text-secondary); line-height:1.9;"></div>
+
+        <div id="update-progress-wrap" style="display:none; margin-top:16px;">
           <div style="height:8px; border-radius:6px; background:rgba(128,128,128,0.2); overflow:hidden;">
             <div id="update-progress-bar" style="height:100%; width:0%; background:var(--accent); transition:width 0.3s linear;"></div>
           </div>
-          <div id="update-progress-label" style="font-size:11.5px; color:var(--text-secondary); margin-top:8px;">Mengunduh... 0%</div>
+          <div id="update-progress-label" style="font-size:11.5px; color:var(--text-secondary); margin-top:8px;"></div>
         </div>
 
-        <button id="btn-install-update" style="margin-top:18px; width:100%; padding:11px; border:none; border-radius:10px; background:var(--accent); color:#08202b; font-weight:600; font-size:13px; cursor:pointer;">
-          Install build terbaru
+        <button id="btn-install-update" style="margin-top:16px; width:100%; padding:11px; border:none; border-radius:10px; background:var(--accent); color:#08202b; font-weight:600; font-size:13px; cursor:pointer;">
+          Patch ke build terpilih
         </button>
-
-        <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--taskbar-border);">
-          <div style="font-size:11.5px; font-weight:600; margin-bottom:6px; color:var(--text-secondary);">Yang baru di ${OS.nextBuild}:</div>
-          <ul style="margin:0; padding-left:18px; font-size:11.5px; color:var(--text-secondary); line-height:1.9;">
-            <li>Perbaikan: pencarian tidak lagi menutup Start Menu secara tidak sengaja</li>
-            <li>Pencarian situs kini selalu terbuka di dalam jendela Browser OS, bukan tab asli</li>
-            <li>Wallpaper custom via URL gambar</li>
-            <li>BrowStore — instal aplikasi resmi: PyPatcher & Widget</li>
-            <li>Widget desktop: jam digital, jam analog minimalis, panel cuaca</li>
-          </ul>
-        </div>
-      ` : `
-        <div style="margin-top:18px; padding:14px 16px; border-radius:12px; background:rgba(128,128,128,0.12); font-size:11.5px; color:var(--text-secondary); line-height:1.6;">
-          🎉 Anda telah memperbarui ke build terbaru. Fitur baru sudah aktif: Start Menu tidak lagi tertutup saat mencari, browser terintegrasi penuh, wallpaper custom, dan BrowStore untuk instalasi aplikasi.
-        </div>
-      `}
+      </div>
     </div>
   `;
 
-  if(!alreadyUpdated){
+  const select = content.querySelector("#sel-update-build");
+  const changelogBox = content.querySelector("#update-changelog");
+
+  function renderChangelogFor(targetId){
+    const targetIdx = OS.buildHistory.findIndex(b => b.id === targetId);
+    const currentIdx = OS.buildHistory.findIndex(b => b.id === current.id);
+    const isUpgrade = targetIdx > currentIdx;
+    let items = [];
+    if(isUpgrade){
+      // gabungkan changelog semua build di antara current (eksklusif) sampai target (inklusif)
+      for(let i = currentIdx + 1; i <= targetIdx; i++){
+        items = items.concat(BUILD_CHANGELOG[OS.buildHistory[i].id] || []);
+      }
+      changelogBox.innerHTML = `<div style="font-weight:600; color:var(--text-primary); margin-bottom:4px;">Yang baru jika upgrade:</div>` +
+        `<ul style="margin:0; padding-left:18px;">${items.map(i => `<li>${i}</li>`).join("")}</ul>`;
+    } else {
+      changelogBox.innerHTML = `<div style="padding:10px 12px; border-radius:10px; background:rgba(250,204,21,0.12); border:1px solid rgba(250,204,21,0.35); color:var(--text-primary);">
+        ⚠️ Ini adalah downgrade. Beberapa fitur yang sudah aktif saat ini bisa jadi tidak tersedia lagi di build tersebut.
+      </div>`;
+    }
+  }
+
+  if(others.length > 0){
+    renderChangelogFor(select.value);
+    select.addEventListener("change", () => renderChangelogFor(select.value));
+
     content.querySelector("#btn-install-update").addEventListener("click", () => {
-      runUpdateGimmick(content);
+      runUpdateGimmick(content, select.value);
     });
+  } else {
+    content.querySelector("#btn-install-update").style.display = "none";
   }
 }
 
-function runUpdateGimmick(content){
+function runUpdateGimmick(content, targetBuildId){
+  const target = OS.buildHistory.find(b => b.id === targetBuildId);
+  if(!target) return;
+
   const btn = content.querySelector("#btn-install-update");
+  const select = content.querySelector("#sel-update-build");
   const wrap = content.querySelector("#update-progress-wrap");
   const bar = content.querySelector("#update-progress-bar");
   const label = content.querySelector("#update-progress-label");
 
   btn.disabled = true;
+  select.disabled = true;
   btn.style.opacity = "0.5";
   btn.textContent = "Mengunduh...";
   wrap.style.display = "block";
@@ -1539,7 +1642,7 @@ function runUpdateGimmick(content){
   const stepMs = 200;
   let elapsed = 0;
 
-  toast("Update dimulai", `Mengunduh ${OS.nextBuild}...`, "⬇️", 3000);
+  toast("Update dimulai", `Mengunduh ${target.version}...`, "⬇️", 3000);
 
   const timer = setInterval(() => {
     elapsed += stepMs;
@@ -1554,14 +1657,13 @@ function runUpdateGimmick(content){
       btn.disabled = false;
       btn.style.opacity = "1";
       btn.onclick = () => {
-        OS.settings._updated = true;
+        OS.settings.currentBuildId = target.id;
         saveSettings();
         toast("Siap diinstal", "Restart untuk menyelesaikan pembaruan.", "🔄", 3000);
         setTimeout(() => {
           rebootOS();
           setTimeout(() => {
-            OS.apps.find(a=>a.id==="settings"); // noop
-            toast("Update selesai", `Chromium OS telah diperbarui ke ${OS.nextBuild}.`, "✅", 5000);
+            toast("Update selesai", `Chromium OS telah diperbarui ke ${target.version}.`, "✅", 5000);
           }, 2000);
         }, 700);
       };
@@ -1630,7 +1732,7 @@ function openTerminal(){
   w.tabs[0].render = (body) => {
     body.innerHTML = `
       <div id="term-root" style="background:#0b0d10; height:100%; padding:14px; font-family:'Cascadia Code',Consolas,monospace; font-size:12.5px; color:#7CFC9A; overflow:auto;">
-        <div>Chromium OS Terminal [Version ${OS.version}]</div>
+        <div>Chromium OS Terminal [Version ${getActiveVersionString()}]</div>
         <div style="margin-top:6px; color:#666;">Ketik 'help' untuk daftar perintah (100+ perintah gaya Windows CMD tersedia).</div>
         <div id="term-log" style="margin-top:8px; white-space:pre-wrap;"></div>
         <div style="display:flex; gap:6px; margin-top:6px;">
@@ -1704,7 +1806,7 @@ const TERM_COMMANDS = {
   "?": () => TERM_COMMANDS.help(),
   cls: (a, ctx) => { ctx.clear(); return ""; },
   clear: (a, ctx) => TERM_COMMANDS.cls(a, ctx),
-  ver: () => "Chromium OS [Version " + OS.version + "]",
+  ver: () => "Chromium OS [Version " + getActiveVersionString() + "]",
   version: () => TERM_COMMANDS.ver(),
   date: () => "Tanggal saat ini: " + new Date().toLocaleDateString("id-ID"),
   time: () => "Waktu saat ini: " + new Date().toLocaleTimeString("id-ID"),
@@ -1774,8 +1876,8 @@ const TERM_COMMANDS = {
   exit: () => "(gunakan tombol close pada jendela untuk menutup terminal)",
   systeminfo: () => [
     "Nama Host OS:            " + TERM_STATE.vars.COMPUTERNAME,
-    "Nama OS:                 Chromium OS " + OS.version,
-    "Versi OS:                " + OS.version,
+    "Nama OS:                 Chromium OS " + getActiveVersionString(),
+    "Versi OS:                " + getActiveVersionString(),
     "Produsen Sistem:         Virtual",
     "Tipe Sistem:             x64-based PC",
     "Total Memori Fisik:      8.192 MB",
@@ -1869,7 +1971,7 @@ const TERM_COMMANDS = {
   neofetch: () => [
     "        .---.        " + TERM_STATE.vars.USERNAME + "@" + TERM_STATE.vars.COMPUTERNAME,
     "       /     \\       -----------------------",
-    "       \\.@-@./       OS: Chromium OS " + OS.version,
+    "       \\.@-@./       OS: Chromium OS " + getActiveVersionString(),
     "       /`\\_/`\\       Shell: chrterm",
     "      //  _  \\\\      Uptime: " + Math.floor(performance.now()/1000) + "s",
     "     | \\     )|_     Theme: " + OS.settings.theme,
@@ -1984,43 +2086,98 @@ function openPyPatcher(){
   const w = createWindow("pypatcher", {
     title:"PyPatcher", w:520, h:520, supportsTabs:false, content:""
   });
-  w.tabs[0].render = (body) => {
-    body.innerHTML = `
-      <div style="padding:24px 28px; height:100%; overflow:auto;">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
-          <div style="font-size:26px;">🛠️</div>
-          <div>
-            <div style="font-size:16.5px; font-weight:700;">PyPatcher</div>
-            <div style="font-size:11px; color:var(--text-secondary);">Preview 0.1.0 — belum aktif sepenuhnya</div>
-          </div>
-        </div>
+  w.tabs[0].render = (body) => renderPyPatcherBody(body);
+  renderActiveTabContent(w);
+}
 
-        <div style="margin-top:16px; padding:12px 14px; border-radius:10px; background:rgba(250,204,21,0.12); border:1px solid rgba(250,204,21,0.35); font-size:12px; color:var(--text-primary); line-height:1.6;">
-          ⚠️ Fitur patch build (upgrade / downgrade / loncat versi) masih dalam pengembangan dan belum bisa digunakan. Antarmuka di bawah ini hanya pratinjau riwayat build.
-        </div>
-
-        <div style="margin-top:20px; font-size:12.5px; font-weight:600; color:var(--text-secondary);">Riwayat Build Sistem</div>
-        <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
-          ${OS.buildHistory.map(b => `
-            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-radius:10px; border:1px solid var(--taskbar-border); ${b.version === OS.version ? 'background:rgba(76,194,255,0.1); border-color:var(--accent);' : ''}">
-              <div>
-                <div style="font-size:12.5px; font-weight:600;">${b.label}</div>
-                <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">${b.version}</div>
-              </div>
-              <button disabled title="Belum tersedia" style="padding:7px 14px; border-radius:999px; border:none; font-size:11.5px; font-weight:600; background:rgba(128,128,128,0.2); color:var(--text-secondary); cursor:not-allowed;">
-                ${b.version === OS.version ? 'Aktif' : 'Patch ke sini'}
-              </button>
-            </div>
-          `).join("")}
-        </div>
-
-        <div style="margin-top:20px; font-size:11px; color:var(--text-secondary); line-height:1.6;">
-          Ke depannya, PyPatcher akan memungkinkan Anda berpindah bebas antar build — termasuk kembali ke build awal atau meloncat ke build terbaru.
+function renderPyPatcherBody(body){
+  const current = getCurrentBuild();
+  body.innerHTML = `
+    <div style="padding:24px 28px; height:100%; overflow:auto;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
+        <div style="font-size:26px;">🛠️</div>
+        <div>
+          <div style="font-size:16.5px; font-weight:700;">PyPatcher</div>
+          <div style="font-size:11px; color:var(--text-secondary);">v0.2.0 — Alat patch & kelola versi build</div>
         </div>
       </div>
-    `;
-  };
-  renderActiveTabContent(w);
+
+      <div style="margin-top:16px; padding:12px 14px; border-radius:10px; background:rgba(76,194,255,0.1); border:1px solid rgba(76,194,255,0.3); font-size:12px; color:var(--text-primary); line-height:1.6;">
+        ℹ️ Pilih build di bawah untuk berpindah (upgrade atau downgrade) ke versi tersebut. Sistem akan restart untuk menerapkan perubahan.
+      </div>
+
+      <div id="pypatcher-progress-wrap" style="display:none; margin-top:16px;">
+        <div style="height:8px; border-radius:6px; background:rgba(128,128,128,0.2); overflow:hidden;">
+          <div id="pypatcher-progress-bar" style="height:100%; width:0%; background:var(--accent); transition:width 0.3s linear;"></div>
+        </div>
+        <div id="pypatcher-progress-label" style="font-size:11.5px; color:var(--text-secondary); margin-top:8px;"></div>
+      </div>
+
+      <div style="margin-top:20px; font-size:12.5px; font-weight:600; color:var(--text-secondary);">Riwayat Build Sistem</div>
+      <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;" id="pypatcher-build-list">
+        ${OS.buildHistory.map(b => `
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-radius:10px; border:1px solid var(--taskbar-border); ${b.id === current.id ? 'background:rgba(76,194,255,0.1); border-color:var(--accent);' : ''}">
+            <div>
+              <div style="font-size:12.5px; font-weight:600;">${b.label}</div>
+              <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">${b.version}</div>
+            </div>
+            <button class="pypatcher-patch-btn" data-build="${b.id}" ${b.id === current.id ? "disabled" : ""} style="padding:7px 14px; border-radius:999px; border:none; font-size:11.5px; font-weight:600; cursor:${b.id === current.id ? "default" : "pointer"}; ${b.id === current.id ? 'background:rgba(128,128,128,0.2); color:var(--text-secondary);' : 'background:var(--accent); color:#08202b;'}">
+              ${b.id === current.id ? 'Aktif' : 'Patch ke sini'}
+            </button>
+          </div>
+        `).join("")}
+      </div>
+
+      <div style="margin-top:20px; font-size:11px; color:var(--text-secondary); line-height:1.6;">
+        Catatan: berpindah ke build lama dapat menonaktifkan fitur yang belum tersedia di build tersebut (mis. BrowStore, wallpaper custom, widget desktop).
+      </div>
+    </div>
+  `;
+
+  body.querySelectorAll(".pypatcher-patch-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const targetId = btn.dataset.build;
+      if(targetId === OS.settings.currentBuildId) return;
+      runPyPatcherPatch(body, targetId);
+    });
+  });
+}
+
+function runPyPatcherPatch(body, targetBuildId){
+  const target = OS.buildHistory.find(b => b.id === targetBuildId);
+  if(!target) return;
+
+  body.querySelectorAll(".pypatcher-patch-btn").forEach(b => b.disabled = true);
+  const wrap = body.querySelector("#pypatcher-progress-wrap");
+  const bar = body.querySelector("#pypatcher-progress-bar");
+  const label = body.querySelector("#pypatcher-progress-label");
+  wrap.style.display = "block";
+
+  toast("PyPatcher", `Mem-patch sistem ke ${target.version}...`, "🛠️", 3000);
+
+  const totalMs = 8000;
+  const stepMs = 150;
+  let elapsed = 0;
+
+  const timer = setInterval(() => {
+    elapsed += stepMs;
+    const pct = Math.min(100, Math.round((elapsed / totalMs) * 100));
+    bar.style.width = pct + "%";
+    label.textContent = `Mem-patch ke ${target.version}... ${pct}%`;
+
+    if(pct >= 100){
+      clearInterval(timer);
+      label.textContent = "Selesai. Merestart sistem...";
+      OS.settings.currentBuildId = target.id;
+      saveSettings();
+      setTimeout(() => {
+        rebootOS();
+        setTimeout(() => {
+          toast("Patch selesai", `Sistem kini berjalan di ${target.version}.`, "✅", 5000);
+        }, 2000);
+      }, 700);
+    }
+  }, stepMs);
 }
 
 /* ============================================================
@@ -2219,7 +2376,7 @@ function openAbout(){
       <div style="padding:26px; text-align:center;">
         <div style="font-size:44px; margin-bottom:10px;">🖥️</div>
         <div style="font-size:18px; font-weight:700;">Chromium OS</div>
-        <div style="font-size:12.5px; color:var(--text-secondary); margin-top:4px;">${OS.settings._updated ? OS.nextBuild : OS.version}</div>
+        <div style="font-size:12.5px; color:var(--text-secondary); margin-top:4px;">${getActiveVersionString()}</div>
         <div style="margin-top:20px; text-align:left; font-size:12px; color:var(--text-secondary); line-height:2;">
           <div>Taskbar: gaya Windows 11</div>
           <div>Jendela: tab gaya macOS</div>
