@@ -1,0 +1,1965 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chromium OS</title>
+<style>
+  :root{
+    --accent: #4cc2ff;
+    --accent-2: #7dd3fc;
+    --bg-desktop-1: #0f2027;
+    --bg-desktop-2: #203a43;
+    --bg-desktop-3: #2c5364;
+    --taskbar-bg: rgba(24,26,32,0.72);
+    --taskbar-border: rgba(255,255,255,0.08);
+    --window-bg: rgba(28,30,36,0.86);
+    --window-titlebar: rgba(20,22,27,0.9);
+    --text-primary: #f2f3f5;
+    --text-secondary: #9aa0ab;
+    --glass-blur: 24px;
+    --radius-lg: 16px;
+    --radius-md: 12px;
+    --radius-sm: 8px;
+    --transparency: 1;
+  }
+
+  [data-theme="light"]{
+    --taskbar-bg: rgba(255,255,255,0.72);
+    --taskbar-border: rgba(0,0,0,0.08);
+    --window-bg: rgba(255,255,255,0.88);
+    --window-titlebar: rgba(245,246,248,0.92);
+    --text-primary: #1b1c1f;
+    --text-secondary: #62666f;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;width:100%;height:100%;overflow:hidden;
+    font-family:"Segoe UI Variable","Inter",-apple-system,BlinkMacSystemFont,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    user-select:none;
+  }
+
+  #desktop{
+    position:relative;
+    width:100vw;height:100vh;
+    background:
+      radial-gradient(1200px 800px at 15% 10%, rgba(255,255,255,0.06), transparent 60%),
+      linear-gradient(135deg, var(--bg-desktop-1), var(--bg-desktop-2) 50%, var(--bg-desktop-3));
+    background-size:cover;
+    transition:background 0.6s ease;
+    overflow:hidden;
+  }
+
+  #desktop.wall-custom{
+    background-position:center;
+    background-size:cover;
+  }
+
+  /* ============ Desktop Icons ============ */
+  #icon-layer{
+    position:absolute; top:20px; left:20px;
+    display:grid;
+    grid-template-columns:repeat(auto-fill, 84px);
+    grid-auto-rows:96px;
+    gap:6px;
+    z-index:5;
+  }
+  .desk-icon{
+    width:84px; height:90px;
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+    gap:6px; padding:8px 4px;
+    border-radius:var(--radius-sm);
+    cursor:pointer;
+    transition:background 0.15s ease;
+  }
+  .desk-icon:hover{ background:rgba(255,255,255,0.10); }
+  .desk-icon.selected{ background:rgba(76,194,255,0.25); outline:1px solid rgba(76,194,255,0.5);}
+  .desk-icon .ico{
+    width:40px;height:40px;border-radius:10px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:22px;
+    background:linear-gradient(160deg, rgba(255,255,255,0.18), rgba(255,255,255,0.02));
+    box-shadow:0 2px 6px rgba(0,0,0,0.3);
+  }
+  .desk-icon .label{
+    font-size:12px; color:#fff; text-align:center;
+    text-shadow:0 1px 3px rgba(0,0,0,0.6);
+    line-height:1.2;
+    max-width:80px;
+    word-wrap:break-word;
+  }
+  .desk-icon.hidden-app{ display:none; }
+
+  /* ============ Desktop Search Bar (draggable) ============ */
+  #desktop-search{
+    position:absolute;
+    top:80px; left:calc(50% - 320px);
+    width:640px;
+    z-index:6;
+    display:flex; align-items:center; gap:12px;
+    padding:18px 26px;
+    border-radius:999px;
+    background:rgba(255,255,255,0.10);
+    backdrop-filter:blur(18px);
+    -webkit-backdrop-filter:blur(18px);
+    border:1px solid rgba(255,255,255,0.18);
+    box-shadow:0 8px 30px rgba(0,0,0,0.25);
+    cursor:grab;
+    transition:box-shadow 0.2s ease, background 0.2s ease;
+  }
+  #desktop-search:active{ cursor:grabbing; }
+  #desktop-search.dragging{ box-shadow:0 16px 40px rgba(0,0,0,0.4); background:rgba(255,255,255,0.16);}
+  #desktop-search svg{ flex-shrink:0; opacity:0.85; width:20px; height:20px; }
+  #desktop-search input{
+    flex:1; background:transparent; border:none; outline:none;
+    color:#fff; font-size:17px;
+    text-shadow:0 1px 2px rgba(0,0,0,0.3);
+  }
+  #desktop-search input::placeholder{ color:rgba(255,255,255,0.65); }
+  #desktop-search.search-hidden{ display:none; }
+
+  /* ============ Taskbar (Windows 11 style, centered, floating) ============ */
+  #taskbar{
+    position:absolute; bottom:8px; left:50%; transform:translateX(-50%);
+    z-index:1000;
+    display:flex; align-items:center; gap:4px;
+    padding:6px 10px;
+    border-radius:var(--radius-lg);
+    background:var(--taskbar-bg);
+    backdrop-filter:blur(var(--glass-blur));
+    -webkit-backdrop-filter:blur(var(--glass-blur));
+    border:1px solid var(--taskbar-border);
+    box-shadow:0 10px 40px rgba(0,0,0,0.35);
+  }
+  .taskbar-btn{
+    width:44px; height:40px;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:var(--radius-sm);
+    cursor:pointer;
+    font-size:19px;
+    color:var(--text-primary);
+    position:relative;
+    transition:background 0.12s ease, transform 0.1s ease;
+  }
+  .taskbar-btn:hover{ background:rgba(128,128,128,0.18); }
+  .taskbar-btn:active{ transform:scale(0.94); }
+  .taskbar-btn.active::after{
+    content:''; position:absolute; bottom:-3px; left:50%; transform:translateX(-50%);
+    width:5px; height:5px; border-radius:50%; background:var(--accent);
+  }
+  .taskbar-btn.running::after{
+    content:''; position:absolute; bottom:-3px; left:50%; transform:translateX(-50%);
+    width:16px; height:3px; border-radius:2px; background:var(--text-secondary);
+  }
+  .taskbar-sep{ width:1px; height:26px; background:var(--taskbar-border); margin:0 4px; }
+
+  #tray{
+    display:flex; align-items:center; gap:10px;
+    padding:0 10px 0 14px;
+    font-size:12.5px; color:var(--text-primary);
+    cursor:pointer;
+    border-radius:var(--radius-sm);
+    height:40px;
+  }
+  #tray:hover{ background:rgba(128,128,128,0.18); }
+  #tray .clock{ text-align:right; line-height:1.25; }
+  #tray .clock .time{ font-weight:600; font-size:12.5px;}
+  #tray .clock .date{ font-size:11px; color:var(--text-secondary); }
+
+  /* ============ Start Menu ============ */
+  #start-menu{
+    position:absolute; bottom:64px; left:50%; transform:translateX(-50%) translateY(12px);
+    width:560px; max-height:640px;
+    background:var(--window-bg);
+    backdrop-filter:blur(var(--glass-blur));
+    -webkit-backdrop-filter:blur(var(--glass-blur));
+    border:1px solid var(--taskbar-border);
+    border-radius:var(--radius-lg);
+    box-shadow:0 20px 60px rgba(0,0,0,0.45);
+    padding:28px;
+    z-index:1001;
+    opacity:0; pointer-events:none;
+    transition:opacity 0.16s ease, transform 0.16s ease;
+  }
+  #start-menu.open{ opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0); }
+  #start-menu .sm-search{
+    display:flex; align-items:center; gap:10px;
+    background:rgba(128,128,128,0.15);
+    border-radius:999px; padding:13px 20px; margin-bottom:22px;
+  }
+  #start-menu .sm-search svg{ width:19px; height:19px; }
+  #start-menu .sm-search input{ flex:1; background:transparent; border:none; outline:none; color:var(--text-primary); font-size:15.5px;}
+  #start-menu h4{ font-size:13.5px; color:var(--text-secondary); font-weight:600; margin:0 0 14px 2px; }
+  .sm-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:22px;}
+  .sm-app{
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    padding:16px 6px; border-radius:var(--radius-sm); cursor:pointer;
+    color:var(--text-primary); font-size:13px; text-align:center;
+  }
+  .sm-app:hover{ background:rgba(128,128,128,0.15); }
+  .sm-app .ico{ font-size:28px; }
+  #start-menu .sm-footer{
+    display:flex; align-items:center; justify-content:space-between;
+    border-top:1px solid var(--taskbar-border); padding-top:14px; margin-top:4px;
+  }
+  .sm-user{ display:flex; align-items:center; gap:10px; color:var(--text-primary); font-size:13px;}
+  .sm-avatar{ width:30px;height:30px;border-radius:50%; background:linear-gradient(140deg,var(--accent),var(--accent-2)); display:flex;align-items:center;justify-content:center; font-size:14px;}
+  .sm-power{ width:36px;height:36px; border-radius:var(--radius-sm); display:flex;align-items:center;justify-content:center; cursor:pointer; color:var(--text-primary);}
+  .sm-power:hover{ background:rgba(128,128,128,0.15); }
+
+  /* ============ Windows ============ */
+  .app-window{
+    position:absolute;
+    min-width:340px; min-height:220px;
+    background:var(--window-bg);
+    backdrop-filter:blur(calc(var(--glass-blur) * var(--transparency)));
+    -webkit-backdrop-filter:blur(calc(var(--glass-blur) * var(--transparency)));
+    border-radius:var(--radius-lg);
+    border:1px solid var(--taskbar-border);
+    box-shadow:0 24px 70px rgba(0,0,0,0.5);
+    display:flex; flex-direction:column;
+    overflow:hidden;
+    z-index:100;
+  }
+  .app-window.maximized{
+    border-radius:0 !important;
+  }
+  .app-window.minimized{ display:none; }
+
+  .win-tabbar{
+    display:flex; align-items:center; gap:8px;
+    height:44px; padding:0 10px;
+    background:var(--window-titlebar);
+    border-bottom:1px solid var(--taskbar-border);
+    cursor:default;
+  }
+  .win-traffic{ display:flex; gap:8px; padding-right:10px; flex-shrink:0; }
+  .win-traffic span{
+    width:12px;height:12px;border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:8px; color:rgba(0,0,0,0.5); cursor:pointer;
+  }
+  .tw-close{ background:#ff5f57; }
+  .tw-min{ background:#febc2e; }
+  .tw-max{ background:#28c840; }
+  .win-traffic span:hover{ filter:brightness(1.1); }
+  .win-traffic span .sym{ opacity:0; }
+  .win-traffic:hover span .sym{ opacity:1; }
+
+  .win-tabs{ flex:1; display:flex; align-items:flex-end; gap:2px; height:100%; overflow:hidden; }
+  .win-tab{
+    display:flex; align-items:center; gap:6px;
+    padding:0 12px; height:32px; margin-top:8px;
+    border-radius:10px 10px 0 0;
+    background:rgba(128,128,128,0.12);
+    color:var(--text-secondary);
+    font-size:12px; max-width:160px;
+    cursor:pointer;
+    position:relative;
+  }
+  .win-tab.active{ background:var(--window-bg); color:var(--text-primary); }
+  .win-tab .t-title{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .win-tab .t-close{ opacity:0; font-size:13px; }
+  .win-tab:hover .t-close{ opacity:0.7; }
+  .win-tab .t-close:hover{ opacity:1; }
+  .win-tab-add{
+    width:26px; height:26px; margin-top:8px; margin-left:2px;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:8px; color:var(--text-secondary); cursor:pointer; flex-shrink:0;
+  }
+  .win-tab-add:hover{ background:rgba(128,128,128,0.15); }
+
+  .win-titletext{
+    font-size:12.5px; color:var(--text-secondary); padding:0 4px 0 10px; flex-shrink:0;
+    max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+
+  .win-body{ flex:1; overflow:auto; position:relative; color:var(--text-primary); }
+  .win-resize-handle{
+    position:absolute; right:0; bottom:0; width:16px; height:16px; cursor:nwse-resize; z-index:5;
+  }
+
+  /* ============ Context Menu ============ */
+  #ctx-menu{
+    position:absolute; z-index:5000;
+    min-width:220px;
+    background:var(--window-bg);
+    backdrop-filter:blur(var(--glass-blur));
+    -webkit-backdrop-filter:blur(var(--glass-blur));
+    border:1px solid var(--taskbar-border);
+    border-radius:var(--radius-md);
+    box-shadow:0 16px 50px rgba(0,0,0,0.5);
+    padding:6px;
+    display:none;
+  }
+  #ctx-menu.open{ display:block; }
+  .ctx-item{
+    display:flex; align-items:center; gap:10px;
+    padding:9px 12px; border-radius:var(--radius-sm);
+    font-size:13px; color:var(--text-primary); cursor:pointer;
+  }
+  .ctx-item:hover{ background:var(--accent); color:#08202b; }
+  .ctx-item .ctx-ico{ width:16px; text-align:center; opacity:0.8; }
+  .ctx-sep{ height:1px; background:var(--taskbar-border); margin:6px 4px; }
+  .ctx-item.disabled{ opacity:0.35; pointer-events:none; }
+
+  /* ============ Notification / Toast ============ */
+  #toast-layer{ position:absolute; top:20px; right:20px; z-index:6000; display:flex; flex-direction:column; gap:10px; align-items:flex-end; }
+  .toast{
+    min-width:280px; max-width:340px;
+    background:var(--window-bg);
+    backdrop-filter:blur(var(--glass-blur));
+    border:1px solid var(--taskbar-border);
+    border-radius:var(--radius-md);
+    box-shadow:0 16px 40px rgba(0,0,0,0.4);
+    padding:14px 16px;
+    color:var(--text-primary);
+    font-size:13px;
+    animation:toast-in 0.25s ease;
+  }
+  .toast .t-head{ display:flex; align-items:center; gap:8px; font-weight:600; margin-bottom:4px; }
+  .toast .t-body{ color:var(--text-secondary); font-size:12px; line-height:1.4; }
+  @keyframes toast-in{ from{opacity:0; transform:translateX(30px);} to{opacity:1; transform:translateX(0);} }
+
+  /* scrollbar */
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb{ background:rgba(128,128,128,0.35); border-radius:8px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+
+  /* Boot screen */
+  #boot-screen{
+    position:fixed; inset:0; background:#000; z-index:99999;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:24px;
+    color:#fff;
+  }
+  #boot-screen .logo{ font-size:44px; font-weight:300; letter-spacing:1px; display:flex; align-items:center; gap:14px;}
+  #boot-screen .ring{ width:34px;height:34px;border-radius:50%; border:3px solid rgba(255,255,255,0.2); border-top-color:#4cc2ff; animation:spin 0.9s linear infinite;}
+  @keyframes spin{ to{ transform:rotate(360deg);} }
+  #boot-screen.hide{ display:none; }
+</style>
+</head>
+<body>
+
+<div id="boot-screen">
+  <div class="logo"><span class="ring"></span> Chromium OS</div>
+</div>
+
+<div id="desktop" data-theme="dark">
+
+  <div id="icon-layer"></div>
+
+  <div id="desktop-search">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" id="search-input" placeholder="Cari di web atau ketik URL">
+  </div>
+
+  <div id="windows-layer"></div>
+
+  <div id="toast-layer"></div>
+
+  <!-- Start Menu -->
+  <div id="start-menu"></div>
+
+  <!-- Taskbar -->
+  <div id="taskbar">
+    <div class="taskbar-btn" id="btn-start" title="Start">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="2" width="9" height="9" rx="1.5"/><rect x="13" y="2" width="9" height="9" rx="1.5"/><rect x="2" y="13" width="9" height="9" rx="1.5"/><rect x="13" y="13" width="9" height="9" rx="1.5"/></svg>
+    </div>
+    <div class="taskbar-btn" id="btn-search" title="Search">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    </div>
+    <div class="taskbar-sep"></div>
+    <div id="pinned-apps" style="display:flex; gap:4px;"></div>
+    <div id="running-apps" style="display:flex; gap:4px;"></div>
+    <div class="taskbar-sep"></div>
+    <div id="tray">
+      <span id="tray-icons">🔊 📶 🔋</span>
+      <div class="clock" id="clock">
+        <div class="time">00:00</div>
+        <div class="date">--/--/----</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="ctx-menu"></div>
+
+<script>
+/* ============================================================
+   CHROMIUM OS — a fake desktop-OS simulator running in a browser
+   ============================================================ */
+
+const OS = {
+  version: "Build 24H2.1103",
+  nextBuild: "Build 25H1.0042",
+  zTop: 100,
+  windows: {},     // id -> window state
+  winCount: 0,
+  settings: {
+    theme: "dark",
+    accent: "#4cc2ff",
+    wallpaper: "default",
+    transparency: 1,
+    contrast: "normal",
+    nightlight: false,
+    scale: 100,
+    showSearchBar: true,
+    hiddenApps: {},
+    searchPos: null // {top,left} custom
+  },
+  apps: [
+    { id:"browser", name:"Chromium Browser", icon:"🌐", pinned:true },
+    { id:"files", name:"File Explorer", icon:"🗂️", pinned:true },
+    { id:"settings", name:"Settings", icon:"⚙️", pinned:true },
+    { id:"notes", name:"Notes", icon:"📝", pinned:true },
+    { id:"terminal", name:"Terminal", icon:"⌥", pinned:false },
+    { id:"about", name:"About This OS", icon:"ℹ️", pinned:false },
+  ]
+};
+
+/* ---------- persistence (in-memory only, per spec no localStorage in artifacts sometimes ok in plain HTML, but we keep it in-memory to be safe) ---------- */
+function loadSettings(){
+  try{
+    const raw = localStorage.getItem("chromiumos_settings");
+    if(raw){ Object.assign(OS.settings, JSON.parse(raw)); }
+  }catch(e){ /* storage unavailable, fine, just runtime state */ }
+}
+function saveSettings(){
+  try{ localStorage.setItem("chromiumos_settings", JSON.stringify(OS.settings)); }catch(e){}
+}
+
+const WALLPAPERS = {
+  default: "linear-gradient(135deg, #0f2027, #203a43 50%, #2c5364)",
+  aurora: "linear-gradient(135deg, #1a2980, #26d0ce)",
+  sunset: "linear-gradient(135deg, #ff512f, #dd2476)",
+  forest: "linear-gradient(135deg, #134e5e, #71b280)",
+  mono: "linear-gradient(135deg, #232526, #414345)",
+  lavender: "linear-gradient(135deg, #654ea3, #eaafc8)",
+};
+
+/* ============ BOOT ============ */
+window.addEventListener("DOMContentLoaded", () => {
+  loadSettings();
+  setTimeout(() => {
+    document.getElementById("boot-screen").classList.add("hide");
+    initOS();
+  }, 1400);
+});
+
+function initOS(){
+  applySettingsToDOM();
+  renderDesktopIcons();
+  renderTaskbarApps();
+  renderStartMenu();
+  initClock();
+  initDesktopSearch();
+  initContextMenu();
+  initGlobalClicks();
+  toast("Selamat datang", `Chromium OS ${OS.version} siap digunakan.`, "👋");
+}
+
+/* ============ CLOCK ============ */
+function initClock(){
+  function tick(){
+    const now = new Date();
+    const time = now.toLocaleTimeString("id-ID", {hour:"2-digit", minute:"2-digit"});
+    const date = now.toLocaleDateString("id-ID", {day:"2-digit", month:"2-digit", year:"numeric"});
+    document.querySelector("#clock .time").textContent = time;
+    document.querySelector("#clock .date").textContent = date;
+  }
+  tick();
+  setInterval(tick, 1000 * 15);
+}
+
+/* ============ APPLY SETTINGS ============ */
+function applySettingsToDOM(){
+  const root = document.documentElement;
+  const desktop = document.getElementById("desktop");
+
+  desktop.setAttribute("data-theme", OS.settings.theme);
+  root.style.setProperty("--accent", OS.settings.accent);
+  root.style.setProperty("--transparency", OS.settings.transparency);
+
+  // wallpaper
+  const wp = WALLPAPERS[OS.settings.wallpaper] || WALLPAPERS.default;
+  desktop.style.background = wp;
+
+  // contrast
+  if(OS.settings.contrast === "high"){
+    root.style.setProperty("--text-secondary", OS.settings.theme === "light" ? "#000" : "#fff");
+  } else {
+    root.style.setProperty("--text-secondary", OS.settings.theme === "light" ? "#62666f" : "#9aa0ab");
+  }
+
+  // night light
+  if(OS.settings.nightlight){
+    desktop.style.filter = "sepia(0.25) saturate(1.15) hue-rotate(-8deg) brightness(0.96)";
+  } else {
+    desktop.style.filter = "none";
+  }
+
+  // scale
+  document.body.style.zoom = (OS.settings.scale / 100);
+
+  // search bar visibility
+  const bar = document.getElementById("desktop-search");
+  if(OS.settings.showSearchBar){
+    bar.classList.remove("search-hidden");
+  } else {
+    bar.classList.add("search-hidden");
+  }
+  if(OS.settings.searchPos){
+    bar.style.top = OS.settings.searchPos.top + "px";
+    bar.style.left = OS.settings.searchPos.left + "px";
+  }
+}
+
+/* ============ TOASTS ============ */
+function toast(title, body, icon="🔔", timeout=4200){
+  const layer = document.getElementById("toast-layer");
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.innerHTML = `<div class="t-head">${icon} ${title}</div><div class="t-body">${body}</div>`;
+  layer.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = "opacity 0.3s ease, transform 0.3s ease";
+    el.style.opacity = "0";
+    el.style.transform = "translateX(30px)";
+    setTimeout(() => el.remove(), 320);
+  }, timeout);
+}
+
+/* ============ DESKTOP ICONS ============ */
+function renderDesktopIcons(){
+  const layer = document.getElementById("icon-layer");
+  layer.innerHTML = "";
+  OS.apps.forEach(app => {
+    if(OS.settings.hiddenApps[app.id]) return;
+    const el = document.createElement("div");
+    el.className = "desk-icon";
+    el.dataset.appId = app.id;
+    el.innerHTML = `<div class="ico">${app.icon}</div><div class="label">${app.name}</div>`;
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      document.querySelectorAll(".desk-icon").forEach(i => i.classList.remove("selected"));
+      el.classList.add("selected");
+    });
+    el.addEventListener("dblclick", () => openApp(app.id));
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      showAppIconContextMenu(e, app);
+    });
+    layer.appendChild(el);
+  });
+}
+
+/* ============ DESKTOP SEARCH BAR (draggable) ============ */
+function initDesktopSearch(){
+  const bar = document.getElementById("desktop-search");
+  const input = document.getElementById("search-input");
+  let dragging = false, offX = 0, offY = 0;
+
+  bar.addEventListener("mousedown", (e) => {
+    if(e.target === input) return; // allow typing without dragging
+    dragging = true;
+    bar.classList.add("dragging");
+    const rect = bar.getBoundingClientRect();
+    offX = e.clientX - rect.left;
+    offY = e.clientY - rect.top;
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if(!dragging) return;
+    let left = e.clientX - offX;
+    let top = e.clientY - offY;
+    left = Math.max(4, Math.min(window.innerWidth - bar.offsetWidth - 4, left));
+    top = Math.max(4, Math.min(window.innerHeight - bar.offsetHeight - 90, top));
+    bar.style.left = left + "px";
+    bar.style.top = top + "px";
+  });
+  window.addEventListener("mouseup", () => {
+    if(!dragging) return;
+    dragging = false;
+    bar.classList.remove("dragging");
+    const rect = bar.getBoundingClientRect();
+    OS.settings.searchPos = { top: rect.top, left: rect.left };
+    saveSettings();
+  });
+
+  input.addEventListener("keydown", (e) => {
+    if(e.key === "Enter" && input.value.trim()){
+      openApp("browser", { query: input.value.trim() });
+      input.value = "";
+    }
+  });
+
+  document.getElementById("btn-search").addEventListener("click", () => {
+    input.focus();
+  });
+}
+
+/* ============ TASKBAR PINNED / RUNNING APPS ============ */
+function renderTaskbarApps(){
+  const pinnedWrap = document.getElementById("pinned-apps");
+  pinnedWrap.innerHTML = "";
+  OS.apps.filter(a => a.pinned).forEach(app => {
+    const btn = document.createElement("div");
+    btn.className = "taskbar-btn";
+    btn.title = app.name;
+    btn.dataset.appId = app.id;
+    btn.textContent = app.icon;
+    btn.addEventListener("click", () => toggleAppFromTaskbar(app.id));
+    btn.addEventListener("contextmenu", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      showAppIconContextMenu(e, app);
+    });
+    pinnedWrap.appendChild(btn);
+  });
+  refreshRunningIndicators();
+}
+
+function refreshRunningIndicators(){
+  document.querySelectorAll("#pinned-apps .taskbar-btn").forEach(btn => {
+    const appId = btn.dataset.appId;
+    const hasWin = Object.values(OS.windows).some(w => w.appId === appId && !w.closed);
+    const isFocused = Object.values(OS.windows).some(w => w.appId === appId && !w.closed && w.el.style.zIndex == OS.zTop);
+    btn.classList.toggle("running", hasWin);
+    btn.classList.toggle("active", isFocused);
+  });
+}
+
+function toggleAppFromTaskbar(appId){
+  const wins = Object.values(OS.windows).filter(w => w.appId === appId && !w.closed);
+  if(wins.length === 0){
+    openApp(appId);
+  } else {
+    const w = wins[wins.length - 1];
+    if(w.minimized){
+      restoreWindow(w.id);
+    } else {
+      const topZ = Math.max(...Object.values(OS.windows).filter(x=>!x.closed).map(x=>parseInt(x.el.style.zIndex||0)));
+      if(parseInt(w.el.style.zIndex) === topZ){
+        minimizeWindow(w.id);
+      } else {
+        focusWindow(w.id);
+      }
+    }
+  }
+}
+
+/* ============ START MENU ============ */
+function renderStartMenu(){
+  const sm = document.getElementById("start-menu");
+  const appsHtml = OS.apps.map(app => `
+    <div class="sm-app" data-app-id="${app.id}">
+      <div class="ico">${app.icon}</div>
+      <div>${app.name}</div>
+    </div>
+  `).join("");
+  sm.innerHTML = `
+    <div class="sm-search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-secondary)"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" placeholder="Ketik untuk mencari aplikasi">
+    </div>
+    <h4>Pinned</h4>
+    <div class="sm-grid">${appsHtml}</div>
+    <div class="sm-footer">
+      <div class="sm-user"><div class="sm-avatar">U</div> Pengguna</div>
+      <div class="sm-power" id="sm-power-btn" title="Power">⏻</div>
+    </div>
+  `;
+  sm.querySelectorAll(".sm-app").forEach(el => {
+    el.addEventListener("click", () => {
+      openApp(el.dataset.appId);
+      closeStartMenu();
+    });
+  });
+  sm.querySelector("#sm-power-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    showPowerMenu(e);
+  });
+
+  document.getElementById("btn-start").addEventListener("click", (e) => {
+    e.stopPropagation();
+    sm.classList.toggle("open");
+    if(sm.classList.contains("open")){
+      const smInput = sm.querySelector(".sm-search input");
+      if(smInput) setTimeout(() => smInput.focus(), 50);
+    }
+  });
+
+  // Cegah klik di dalam start menu (termasuk search box) menutup menu lewat global click handler
+  sm.addEventListener("click", (e) => e.stopPropagation());
+
+  // Live filter aplikasi saat mengetik di search box start menu
+  const smSearchInput = sm.querySelector(".sm-search input");
+  if(smSearchInput){
+    smSearchInput.addEventListener("input", () => {
+      const q = smSearchInput.value.trim().toLowerCase();
+      sm.querySelectorAll(".sm-app").forEach(el => {
+        const name = el.querySelector("div:last-child").textContent.toLowerCase();
+        el.style.display = name.includes(q) ? "" : "none";
+      });
+    });
+    smSearchInput.addEventListener("keydown", (e) => {
+      if(e.key === "Escape") closeStartMenu();
+    });
+  }
+}
+function closeStartMenu(){ document.getElementById("start-menu").classList.remove("open"); }
+
+function showPowerMenu(e){
+  const items = [
+    { label:"Restart", icon:"🔄", action: () => rebootOS() },
+    { label:"Shut down", icon:"⏻", action: () => shutdownOS() },
+  ];
+  openCustomMenu(e.clientX, e.clientY - 90, items);
+}
+
+function rebootOS(){
+  closeStartMenu();
+  const boot = document.getElementById("boot-screen");
+  boot.classList.remove("hide");
+  boot.querySelector(".logo").innerHTML = `<span class="ring"></span> Chromium OS`;
+  Object.values(OS.windows).forEach(w => w.el && w.el.remove());
+  OS.windows = {};
+  setTimeout(() => {
+    boot.classList.add("hide");
+    toast("Restart selesai", "Chromium OS telah dimulai ulang.", "🔄");
+  }, 1800);
+}
+
+function shutdownOS(){
+  closeStartMenu();
+  document.body.innerHTML = `<div style="width:100vw;height:100vh;background:#000;"></div>`;
+}
+
+/* ============ GLOBAL CLICKS (close menus on outside click) ============ */
+function initGlobalClicks(){
+  document.addEventListener("click", (e) => {
+    closeStartMenu();
+    document.getElementById("ctx-menu").classList.remove("open");
+    if(!e.target.closest(".desk-icon")){
+      document.querySelectorAll(".desk-icon").forEach(i => i.classList.remove("selected"));
+    }
+  });
+}
+
+/* ============================================================
+   WINDOW MANAGER
+   ============================================================ */
+function createWindow(appId, opts={}){
+  const app = OS.apps.find(a => a.id === appId);
+  const id = "win_" + (++OS.winCount);
+  const layer = document.getElementById("windows-layer");
+
+  const w = {
+    id, appId,
+    title: opts.title || (app ? app.name : "Window"),
+    tabs: [{ id: "tab_1", title: opts.title || (app ? app.name : "Window"), content: opts.content || null }],
+    activeTab: "tab_1",
+    minimized: false, maximized: false, closed:false,
+    x: opts.x ?? (80 + Object.keys(OS.windows).length * 28),
+    y: opts.y ?? (60 + Object.keys(OS.windows).length * 24),
+    w: opts.w ?? 760, h: opts.h ?? 500,
+  };
+
+  const el = document.createElement("div");
+  el.className = "app-window";
+  el.style.left = w.x + "px";
+  el.style.top = w.y + "px";
+  el.style.width = w.w + "px";
+  el.style.height = w.h + "px";
+  el.style.zIndex = ++OS.zTop;
+
+  el.innerHTML = `
+    <div class="win-tabbar">
+      <div class="win-traffic">
+        <span class="tw-close" data-act="close"><span class="sym">✕</span></span>
+        <span class="tw-min" data-act="min"><span class="sym">−</span></span>
+        <span class="tw-max" data-act="max"><span class="sym">⤢</span></span>
+      </div>
+      <div class="win-tabs"></div>
+      ${opts.supportsTabs !== false ? `<div class="win-tab-add" title="Tab baru">+</div>` : ``}
+      <div class="win-titletext"></div>
+    </div>
+    <div class="win-body"></div>
+    <div class="win-resize-handle"></div>
+  `;
+  layer.appendChild(el);
+  w.el = el;
+  w.supportsTabs = opts.supportsTabs !== false;
+  OS.windows[id] = w;
+
+  // traffic light buttons
+  el.querySelector('[data-act="close"]').addEventListener("click", (e) => { e.stopPropagation(); closeWindow(id); });
+  el.querySelector('[data-act="min"]').addEventListener("click", (e) => { e.stopPropagation(); minimizeWindow(id); });
+  el.querySelector('[data-act="max"]').addEventListener("click", (e) => { e.stopPropagation(); toggleMaximize(id); });
+
+  if(w.supportsTabs){
+    el.querySelector(".win-tab-add").addEventListener("click", (e) => {
+      e.stopPropagation();
+      addTab(id);
+    });
+  }
+
+  // focus on mousedown anywhere in window
+  el.addEventListener("mousedown", () => focusWindow(id));
+
+  // dragging via tabbar
+  makeWindowDraggable(w);
+  makeWindowResizable(w);
+
+  renderTabs(w);
+  renderActiveTabContent(w);
+  focusWindow(id);
+  refreshRunningIndicators();
+  return w;
+}
+
+function renderTabs(w){
+  const tabsWrap = w.el.querySelector(".win-tabs");
+  tabsWrap.innerHTML = "";
+  w.tabs.forEach(tab => {
+    const t = document.createElement("div");
+    t.className = "win-tab" + (tab.id === w.activeTab ? " active" : "");
+    t.innerHTML = `<span class="t-title">${tab.title}</span>${w.tabs.length > 1 ? `<span class="t-close">✕</span>` : ``}`;
+    t.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if(e.target.classList.contains("t-close")){
+        closeTab(w, tab.id);
+      } else {
+        w.activeTab = tab.id;
+        renderTabs(w);
+        renderActiveTabContent(w);
+      }
+    });
+    tabsWrap.appendChild(t);
+  });
+  const titleEl = w.el.querySelector(".win-titletext");
+  const activeTab = w.tabs.find(t => t.id === w.activeTab);
+  titleEl.textContent = w.tabs.length <= 1 ? "" : "";
+}
+
+function addTab(winId, opts={}){
+  const w = OS.windows[winId];
+  const tid = "tab_" + (Math.random().toString(36).slice(2,8));
+  w.tabs.push({ id: tid, title: opts.title || "New Tab", content: opts.content || null });
+  w.activeTab = tid;
+  renderTabs(w);
+  renderActiveTabContent(w);
+}
+
+function closeTab(w, tabId){
+  const idx = w.tabs.findIndex(t => t.id === tabId);
+  if(idx === -1) return;
+  w.tabs.splice(idx, 1);
+  if(w.tabs.length === 0){ closeWindow(w.id); return; }
+  if(w.activeTab === tabId){
+    w.activeTab = w.tabs[Math.max(0, idx-1)].id;
+  }
+  renderTabs(w);
+  renderActiveTabContent(w);
+}
+
+function renderActiveTabContent(w){
+  const body = w.el.querySelector(".win-body");
+  const tab = w.tabs.find(t => t.id === w.activeTab);
+  body.innerHTML = "";
+  if(tab && tab.render){
+    tab.render(body);
+  } else if(tab && tab.content){
+    body.innerHTML = tab.content;
+  }
+}
+
+function focusWindow(id){
+  const w = OS.windows[id];
+  if(!w || w.closed) return;
+  OS.zTop++;
+  w.el.style.zIndex = OS.zTop;
+  refreshRunningIndicators();
+}
+
+function minimizeWindow(id){
+  const w = OS.windows[id];
+  if(!w) return;
+  w.minimized = true;
+  w.el.classList.add("minimized");
+  refreshRunningIndicators();
+}
+function restoreWindow(id){
+  const w = OS.windows[id];
+  if(!w) return;
+  w.minimized = false;
+  w.el.classList.remove("minimized");
+  focusWindow(id);
+}
+function toggleMaximize(id){
+  const w = OS.windows[id];
+  if(!w) return;
+  if(!w.maximized){
+    w._pre = { x:w.el.offsetLeft, y:w.el.offsetTop, width:w.el.style.width, height:w.el.style.height };
+    w.el.style.left = "0px"; w.el.style.top = "0px";
+    w.el.style.width = "100vw"; w.el.style.height = "calc(100vh - 64px)";
+    w.maximized = true;
+    w.el.classList.add("maximized");
+  } else {
+    w.el.style.left = w._pre.x + "px";
+    w.el.style.top = w._pre.y + "px";
+    w.el.style.width = w._pre.width;
+    w.el.style.height = w._pre.height;
+    w.maximized = false;
+    w.el.classList.remove("maximized");
+  }
+  focusWindow(id);
+}
+function closeWindow(id){
+  const w = OS.windows[id];
+  if(!w) return;
+  w.closed = true;
+  w.el.remove();
+  delete OS.windows[id];
+  refreshRunningIndicators();
+}
+
+function makeWindowDraggable(w){
+  const bar = w.el.querySelector(".win-tabbar");
+  let dragging = false, offX = 0, offY = 0;
+  bar.addEventListener("mousedown", (e) => {
+    if(e.target.closest(".win-traffic") || e.target.closest(".win-tab") || e.target.closest(".win-tab-add")) return;
+    if(w.maximized) return;
+    dragging = true;
+    const rect = w.el.getBoundingClientRect();
+    offX = e.clientX - rect.left;
+    offY = e.clientY - rect.top;
+  });
+  window.addEventListener("mousemove", (e) => {
+    if(!dragging) return;
+    let left = e.clientX - offX;
+    let top = Math.max(0, e.clientY - offY);
+    w.el.style.left = left + "px";
+    w.el.style.top = top + "px";
+  });
+  window.addEventListener("mouseup", () => { dragging = false; });
+}
+
+function makeWindowResizable(w){
+  const handle = w.el.querySelector(".win-resize-handle");
+  let resizing = false, startW=0, startH=0, startX=0, startY=0;
+  handle.addEventListener("mousedown", (e) => {
+    e.stopPropagation();
+    resizing = true;
+    startW = w.el.offsetWidth; startH = w.el.offsetHeight;
+    startX = e.clientX; startY = e.clientY;
+  });
+  window.addEventListener("mousemove", (e) => {
+    if(!resizing) return;
+    const newW = Math.max(340, startW + (e.clientX - startX));
+    const newH = Math.max(220, startH + (e.clientY - startY));
+    w.el.style.width = newW + "px";
+    w.el.style.height = newH + "px";
+  });
+  window.addEventListener("mouseup", () => { resizing = false; });
+}
+
+/* ============================================================
+   APP DISPATCHER
+   ============================================================ */
+function openApp(appId, opts={}){
+  if(appId === "browser") return openBrowser(opts);
+  if(appId === "settings") return openSettings(opts);
+  if(appId === "files") return openFiles();
+  if(appId === "notes") return openNotes();
+  if(appId === "terminal") return openTerminal();
+  if(appId === "about") return openAbout();
+}
+
+/* ============ BROWSER (fungsional, hasil pencarian nyata via Bing iframe) ============ */
+const SEARCH_HOME = "home"; // sentinel for "new tab" page
+
+function looksLikeUrl(str){
+  const s = str.trim();
+  if(/^https?:\/\//i.test(s)) return true;
+  // domain-like: word.word (no spaces), e.g. wikipedia.org, example.com/path
+  if(!/\s/.test(s) && /^[a-z0-9-]+(\.[a-z0-9-]+)+([\/?#].*)?$/i.test(s)) return true;
+  return false;
+}
+function normalizeUrl(str){
+  const s = str.trim();
+  if(/^https?:\/\//i.test(s)) return s;
+  return "https://" + s;
+}
+function bingSearchUrl(query){
+  return "https://www.bing.com/search?q=" + encodeURIComponent(query) + "&form=QBLH";
+}
+
+// Each tab carries its own tiny nav history: { history:[], histIndex, query, url, mode }
+function newBrowserTabState(query){
+  const state = { history: [], histIndex: -1 };
+  if(query){
+    navigateTab(state, query);
+  } else {
+    state.history.push({ mode:"home", label:"New Tab" });
+    state.histIndex = 0;
+  }
+  return state;
+}
+
+function navigateTab(state, input){
+  const entry = looksLikeUrl(input)
+    ? { mode:"url", url: normalizeUrl(input), label: input.replace(/^https?:\/\//,'').slice(0,40) }
+    : { mode:"search", query: input, url: bingSearchUrl(input), label: input.slice(0,40) };
+  // truncate forward history if navigating from a back state
+  state.history = state.history.slice(0, state.histIndex + 1);
+  state.history.push(entry);
+  state.histIndex = state.history.length - 1;
+  return entry;
+}
+
+function browserTabRender(state){
+  return function(body){
+    const current = state.history[state.histIndex] || { mode:"home" };
+
+    body.innerHTML = `
+      <div style="display:flex; flex-direction:column; height:100%;">
+        <div class="browser-toolbar" style="display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--taskbar-border); flex-shrink:0;">
+          <span class="bnav" data-act="back" style="cursor:pointer; opacity:${state.histIndex > 0 ? '0.85' : '0.3'}; font-size:15px;">←</span>
+          <span class="bnav" data-act="fwd" style="cursor:pointer; opacity:${state.histIndex < state.history.length - 1 ? '0.85' : '0.3'}; font-size:15px;">→</span>
+          <span class="bnav" data-act="reload" style="cursor:pointer; opacity:0.85; font-size:14px;">⟳</span>
+          <span class="bnav" data-act="home" style="cursor:pointer; opacity:0.85; font-size:14px;">⌂</span>
+          <form class="addr-form" style="flex:1; display:flex;">
+            <div style="flex:1; background:rgba(128,128,128,0.15); border-radius:999px; padding:7px 14px; font-size:12.5px; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+              🔒
+              <input class="addr-input" type="text"
+                value="${current.mode === 'url' ? current.url : (current.mode === 'search' ? current.query : '')}"
+                placeholder="Cari di web atau ketik URL"
+                style="flex:1; background:transparent; border:none; outline:none; color:var(--text-primary); font-size:12.5px;">
+            </div>
+          </form>
+        </div>
+        <div class="browser-content" style="flex:1; position:relative; overflow:hidden; background:#fff;"></div>
+      </div>
+    `;
+
+    const contentEl = body.querySelector(".browser-content");
+    renderBrowserContent(contentEl, current, state);
+
+    body.querySelector('[data-act="back"]').addEventListener("click", () => {
+      if(state.histIndex > 0){ state.histIndex--; browserTabRender(state)(body); }
+    });
+    body.querySelector('[data-act="fwd"]').addEventListener("click", () => {
+      if(state.histIndex < state.history.length - 1){ state.histIndex++; browserTabRender(state)(body); }
+    });
+    body.querySelector('[data-act="reload"]').addEventListener("click", () => {
+      browserTabRender(state)(body);
+    });
+    body.querySelector('[data-act="home"]').addEventListener("click", () => {
+      state.history = state.history.slice(0, state.histIndex + 1);
+      state.history.push({ mode:"home", label:"New Tab" });
+      state.histIndex = state.history.length - 1;
+      browserTabRender(state)(body);
+    });
+
+    const form = body.querySelector(".addr-form");
+    const input = body.querySelector(".addr-input");
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const val = input.value.trim();
+      if(!val) return;
+      navigateTab(state, val);
+      browserTabRender(state)(body);
+      updateActiveTabTitleFromState(body, state);
+    });
+  };
+}
+
+function renderBrowserContent(contentEl, current, state){
+  if(current.mode === "home" || !current){
+    contentEl.style.background = "linear-gradient(180deg, #f4f6f8, #eceef1)";
+    contentEl.innerHTML = `
+      <div style="height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; color:#1b1c1f; text-align:center; padding:20px;">
+        <div style="font-size:40px;">🌐</div>
+        <div style="font-size:20px; font-weight:600;">Chromium Browser</div>
+        <div style="max-width:380px; color:#62666f; font-size:13px; line-height:1.6;">
+          Ketik kata kunci untuk mencari lewat Bing, atau masukkan alamat situs langsung di kotak alamat di atas.
+        </div>
+        <div style="font-size:11px; color:#8a8f99; border-top:1px solid rgba(0,0,0,0.08); padding-top:14px; margin-top:4px;">
+          🔗 Browser ini terintegrasi dengan Chromium OS — pencarian dari desktop otomatis terbuka di sini.
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // real navigation: embed via iframe
+  contentEl.style.background = "#fff";
+  const url = current.url;
+  contentEl.innerHTML = `
+    <div class="iframe-loading" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#fff; color:#62666f; font-size:12.5px; gap:10px; flex-direction:column;">
+      <div style="width:22px;height:22px;border-radius:50%;border:2.5px solid rgba(0,0,0,0.12); border-top-color:var(--accent); animation:spin 0.8s linear infinite;"></div>
+      <div>Memuat ${escapeHtml(current.label || url)}...</div>
+    </div>
+    <iframe src="${url}" style="width:100%; height:100%; border:none; position:relative;" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
+    <div class="iframe-fallback" style="display:none; position:absolute; inset:0; background:#fff; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; padding:30px;">
+      <div style="font-size:34px;">🚧</div>
+      <div style="font-size:15px; font-weight:600; color:#1b1c1f;">Situs ini tidak mengizinkan tampilan tersemat</div>
+      <div style="font-size:12.5px; color:#62666f; max-width:340px;">Beberapa situs memblokir tampilan iframe demi keamanan. Buka langsung di tab browser baru sebagai gantinya.</div>
+      <a href="${url}" target="_blank" rel="noopener noreferrer" style="padding:9px 18px; border-radius:999px; background:var(--accent); color:#08202b; font-size:12.5px; font-weight:600; text-decoration:none;">Buka di tab baru ↗</a>
+    </div>
+  `;
+  const iframe = contentEl.querySelector("iframe");
+  const loading = contentEl.querySelector(".iframe-loading");
+  const fallback = contentEl.querySelector(".iframe-fallback");
+  let settled = false;
+
+  iframe.addEventListener("load", () => {
+    settled = true;
+    loading.style.display = "none";
+  });
+
+  // if it fails to load (blocked by X-Frame-Options/CSP) there's no reliable error event;
+  // use a timeout heuristic to reveal a manual fallback link.
+  setTimeout(() => {
+    if(!settled){
+      loading.style.display = "none";
+    }
+  }, 4500);
+}
+
+function updateActiveTabTitleFromState(body, state){
+  const win = Object.values(OS.windows).find(w => w.el.contains(body));
+  if(!win) return;
+  const tab = win.tabs.find(t => t.id === win.activeTab);
+  const current = state.history[state.histIndex];
+  if(tab && current){
+    tab.title = current.mode === "home" ? "New Tab" : (current.label || "Tab");
+    renderTabs(win);
+  }
+}
+
+function openBrowser(opts={}){
+  const existing = Object.values(OS.windows).find(w => w.appId === "browser" && !w.closed);
+  if(existing && !opts.forceNew){
+    if(existing.minimized) restoreWindow(existing.id); else focusWindow(existing.id);
+    focusWindow(existing.id);
+    if(opts.query){
+      const state = newBrowserTabState(opts.query);
+      const entry = state.history[state.histIndex];
+      addTab(existing.id, { title: entry.label || opts.query.slice(0,18) });
+      const w = OS.windows[existing.id];
+      const tab = w.tabs.find(t => t.id === w.activeTab);
+      tab.render = browserTabRender(state);
+      renderActiveTabContent(w);
+    }
+    return;
+  }
+  const state = newBrowserTabState(opts.query);
+  const entry = state.history[state.histIndex];
+  const w = createWindow("browser", {
+    title: "Chromium Browser",
+    w: 900, h: 600,
+    content: ""
+  });
+  w.tabs[0].title = opts.query ? (entry.label || opts.query.slice(0,18)) : "New Tab";
+  w.tabs[0].render = browserTabRender(state);
+  renderTabs(w);
+  renderActiveTabContent(w);
+}
+
+// override addTab default behaviour for browser windows so new tabs get their own nav state + renderer
+const _origAddTab = addTab;
+addTab = function(winId, opts={}){
+  const w = OS.windows[winId];
+  if(w && w.appId === "browser"){
+    const state = newBrowserTabState(opts.query);
+    const entry = state.history[state.histIndex];
+    const tid = "tab_" + (Math.random().toString(36).slice(2,8));
+    w.tabs.push({ id: tid, title: opts.title || entry.label || "New Tab", render: browserTabRender(state) });
+    w.activeTab = tid;
+    renderTabs(w);
+    renderActiveTabContent(w);
+    return;
+  }
+  return _origAddTab(winId, opts);
+};
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+/* ============================================================
+   SETTINGS APP
+   ============================================================ */
+function openSettings(opts={}){
+  const existing = Object.values(OS.windows).find(w => w.appId === "settings" && !w.closed);
+  if(existing){
+    if(existing.minimized) restoreWindow(existing.id); else focusWindow(existing.id);
+    return;
+  }
+  const w = createWindow("settings", {
+    title: "Settings", w: 780, h: 540, supportsTabs:false,
+    content: "" // will render manually
+  });
+  w.tabs[0].render = (body) => renderSettingsApp(body);
+  renderActiveTabContent(w);
+}
+
+const SETTINGS_SECTIONS = [
+  { id:"display", label:"Display", icon:"🖥️" },
+  { id:"browser", label:"Browser", icon:"🌐" },
+  { id:"preferences", label:"Preferences", icon:"🎨" },
+  { id:"update", label:"Update", icon:"⬇️" },
+];
+
+function renderSettingsApp(body, activeSection){
+  activeSection = activeSection || "display";
+  body.innerHTML = `
+    <div style="display:flex; height:100%;">
+      <div style="width:190px; border-right:1px solid var(--taskbar-border); padding:16px 8px; flex-shrink:0;">
+        <div style="font-size:16px; font-weight:700; padding:6px 10px 16px;">Settings</div>
+        ${SETTINGS_SECTIONS.map(s => `
+          <div class="settings-nav-item" data-sec="${s.id}" style="display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:10px; font-size:13px; cursor:pointer; margin-bottom:2px; ${s.id===activeSection ? 'background:var(--accent); color:#08202b; font-weight:600;' : ''}">
+            <span>${s.icon}</span><span>${s.label}</span>
+          </div>
+        `).join("")}
+      </div>
+      <div style="flex:1; overflow:auto; padding:26px 30px;" id="settings-content"></div>
+    </div>
+  `;
+  body.querySelectorAll(".settings-nav-item").forEach(el => {
+    el.addEventListener("click", () => renderSettingsApp(body, el.dataset.sec));
+  });
+  const content = body.querySelector("#settings-content");
+  if(activeSection === "display") renderDisplaySettings(content);
+  if(activeSection === "browser") renderBrowserSettings(content);
+  if(activeSection === "preferences") renderPreferenceSettings(content);
+  if(activeSection === "update") renderUpdateSettings(content);
+}
+
+function settingsRow(label, desc, controlHtml){
+  return `
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 0; border-bottom:1px solid var(--taskbar-border);">
+      <div style="max-width:60%;">
+        <div style="font-size:13.5px; font-weight:500;">${label}</div>
+        ${desc ? `<div style="font-size:11.5px; color:var(--text-secondary); margin-top:3px; line-height:1.4;">${desc}</div>` : ``}
+      </div>
+      <div>${controlHtml}</div>
+    </div>
+  `;
+}
+
+function toggleSwitchHtml(id, checked){
+  return `
+    <label class="toggle-switch" style="position:relative; display:inline-block; width:42px; height:24px;">
+      <input type="checkbox" id="${id}" ${checked ? "checked" : ""} style="opacity:0; width:0; height:0;">
+      <span class="toggle-track" style="position:absolute; inset:0; background:${checked ? 'var(--accent)' : 'rgba(128,128,128,0.4)'}; border-radius:999px; transition:0.2s;"></span>
+      <span class="toggle-thumb" style="position:absolute; top:3px; left:${checked ? '21px' : '3px'}; width:18px; height:18px; background:#fff; border-radius:50%; transition:0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.4);"></span>
+    </label>
+  `;
+}
+function wireToggle(container, id, onChange){
+  const input = container.querySelector("#"+id);
+  const track = input.parentElement.querySelector(".toggle-track");
+  const thumb = input.parentElement.querySelector(".toggle-thumb");
+  input.addEventListener("change", () => {
+    track.style.background = input.checked ? "var(--accent)" : "rgba(128,128,128,0.4)";
+    thumb.style.left = input.checked ? "21px" : "3px";
+    onChange(input.checked);
+  });
+}
+
+/* ---------- DISPLAY ---------- */
+function renderDisplaySettings(content){
+  content.innerHTML = `
+    <h2 style="margin:0 0 4px;">Display</h2>
+    <p style="color:var(--text-secondary); font-size:12.5px; margin:0 0 10px;">Atur kontras, night light, dan skala tampilan.</p>
+    ${settingsRow("Kontras tinggi", "Meningkatkan kontras teks agar lebih mudah dibaca.", toggleSwitchHtml("tg-contrast", OS.settings.contrast==="high"))}
+    ${settingsRow("Night light", "Menghangatkan warna layar untuk mengurangi cahaya biru.", toggleSwitchHtml("tg-nightlight", OS.settings.nightlight))}
+    ${settingsRow("Skala tampilan (" + OS.settings.scale + "%)", "Ubah ukuran teks, aplikasi, dan elemen lainnya.",
+      `<input type="range" id="rng-scale" min="80" max="130" step="5" value="${OS.settings.scale}" style="width:180px; accent-color:var(--accent);">`
+    )}
+  `;
+  wireToggle(content, "tg-contrast", (checked) => {
+    OS.settings.contrast = checked ? "high" : "normal";
+    applySettingsToDOM(); saveSettings();
+  });
+  wireToggle(content, "tg-nightlight", (checked) => {
+    OS.settings.nightlight = checked;
+    applySettingsToDOM(); saveSettings();
+    toast("Night light", checked ? "Night light diaktifkan." : "Night light dimatikan.", "🌙");
+  });
+  content.querySelector("#rng-scale").addEventListener("input", (e) => {
+    OS.settings.scale = parseInt(e.target.value);
+    applySettingsToDOM(); saveSettings();
+    content.querySelector("h2 + p + div, div").parentElement; // no-op safeguard
+  });
+  content.querySelector("#rng-scale").addEventListener("change", () => {
+    renderDisplaySettings(content);
+  });
+}
+
+/* ---------- BROWSER ---------- */
+function renderBrowserSettings(content){
+  content.innerHTML = `
+    <h2 style="margin:0 0 4px;">Browser</h2>
+    <p style="color:var(--text-secondary); font-size:12.5px; margin:0 0 10px;">Atur perilaku search bar di desktop.</p>
+    ${settingsRow("Tampilkan search bar di desktop", "Tampilkan atau sembunyikan kotak pencarian mengambang di layar desktop.", toggleSwitchHtml("tg-searchbar", OS.settings.showSearchBar))}
+    <div style="margin-top:22px; padding:14px 16px; border-radius:12px; background:rgba(128,128,128,0.12); font-size:11.5px; color:var(--text-secondary); line-height:1.6;">
+      🔗 Browser ini terintegrasi dengan Chromium OS — pencarian dari desktop maupun start menu akan otomatis dibuka lewat aplikasi Chromium Browser.
+    </div>
+  `;
+  wireToggle(content, "tg-searchbar", (checked) => {
+    OS.settings.showSearchBar = checked;
+    applySettingsToDOM(); saveSettings();
+  });
+}
+
+/* ---------- PREFERENCES ---------- */
+const ACCENTS = ["#4cc2ff","#ff5f8a","#6ee7b7","#facc15","#c084fc","#fb923c"];
+function renderPreferenceSettings(content){
+  content.innerHTML = `
+    <h2 style="margin:0 0 4px;">Preferences</h2>
+    <p style="color:var(--text-secondary); font-size:12.5px; margin:0 0 10px;">Sesuaikan tema, wallpaper, mode, dan transparansi.</p>
+
+    ${settingsRow("Mode", "Pilih tampilan terang atau gelap.", `
+      <div style="display:flex; gap:6px;">
+        <button class="pref-mode-btn" data-mode="light" style="padding:7px 14px; border-radius:8px; border:1px solid var(--taskbar-border); cursor:pointer; font-size:12px; background:${OS.settings.theme==='light'?'var(--accent)':'transparent'}; color:${OS.settings.theme==='light'?'#08202b':'var(--text-primary)'};">☀️ Light</button>
+        <button class="pref-mode-btn" data-mode="dark" style="padding:7px 14px; border-radius:8px; border:1px solid var(--taskbar-border); cursor:pointer; font-size:12px; background:${OS.settings.theme==='dark'?'var(--accent)':'transparent'}; color:${OS.settings.theme==='dark'?'#08202b':'var(--text-primary)'};">🌙 Dark</button>
+      </div>
+    `)}
+
+    ${settingsRow("Warna tema", "Pilih warna aksen sistem.", `
+      <div style="display:flex; gap:8px;" id="accent-swatches">
+        ${ACCENTS.map(c => `<div class="accent-swatch" data-c="${c}" style="width:26px; height:26px; border-radius:50%; background:${c}; cursor:pointer; border:2px solid ${OS.settings.accent===c ? '#fff' : 'transparent'}; box-shadow:0 0 0 1px rgba(0,0,0,0.2);"></div>`).join("")}
+      </div>
+    `)}
+
+    ${settingsRow("Wallpaper", "Pilih latar belakang desktop.", "")}
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:-6px 0 16px;" id="wallpaper-grid">
+      ${Object.entries(WALLPAPERS).map(([key,grad]) => `
+        <div class="wallpaper-option" data-wp="${key}" style="height:60px; border-radius:10px; background:${grad}; cursor:pointer; border:2px solid ${OS.settings.wallpaper===key ? 'var(--accent)' : 'transparent'}; position:relative;">
+          <div style="position:absolute; bottom:4px; left:6px; font-size:10px; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6); text-transform:capitalize;">${key}</div>
+        </div>
+      `).join("")}
+    </div>
+
+    ${settingsRow("Transparansi jendela (" + Math.round(OS.settings.transparency*100) + "%)", "Atur tingkat transparansi kaca (mica) pada jendela dan taskbar.",
+      `<input type="range" id="rng-transparency" min="0" max="100" step="5" value="${Math.round(OS.settings.transparency*100)}" style="width:180px; accent-color:var(--accent);">`
+    )}
+  `;
+
+  content.querySelectorAll(".pref-mode-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      OS.settings.theme = btn.dataset.mode;
+      applySettingsToDOM(); saveSettings();
+      renderPreferenceSettings(content);
+    });
+  });
+  content.querySelectorAll(".accent-swatch").forEach(sw => {
+    sw.addEventListener("click", () => {
+      OS.settings.accent = sw.dataset.c;
+      applySettingsToDOM(); saveSettings();
+      renderPreferenceSettings(content);
+    });
+  });
+  content.querySelectorAll(".wallpaper-option").forEach(wp => {
+    wp.addEventListener("click", () => {
+      OS.settings.wallpaper = wp.dataset.wp;
+      applySettingsToDOM(); saveSettings();
+      renderPreferenceSettings(content);
+      toast("Wallpaper diperbarui", "Latar belakang desktop telah diganti.", "🖼️");
+    });
+  });
+  content.querySelector("#rng-transparency").addEventListener("input", (e) => {
+    OS.settings.transparency = parseInt(e.target.value) / 100;
+    applySettingsToDOM(); saveSettings();
+  });
+  content.querySelector("#rng-transparency").addEventListener("change", () => {
+    renderPreferenceSettings(content);
+  });
+}
+
+/* ---------- UPDATE (gimmick) ---------- */
+function renderUpdateSettings(content){
+  const alreadyUpdated = OS.settings._updated;
+  content.innerHTML = `
+    <h2 style="margin:0 0 4px;">Update</h2>
+    <p style="color:var(--text-secondary); font-size:12.5px; margin:0 0 18px;">Periksa dan instal pembaruan sistem terbaru.</p>
+
+    <div style="border:1px solid var(--taskbar-border); border-radius:14px; padding:20px;">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <div>
+          <div style="font-size:13.5px; font-weight:600;">Chromium OS ${alreadyUpdated ? OS.nextBuild : OS.version}</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); margin-top:3px;">${alreadyUpdated ? "Sistem Anda sudah yang terbaru." : "Build terbaru tersedia untuk diunduh."}</div>
+        </div>
+        <div style="font-size:26px;">${alreadyUpdated ? "✅" : "⬇️"}</div>
+      </div>
+
+      ${!alreadyUpdated ? `
+        <div id="update-progress-wrap" style="display:none; margin-top:18px;">
+          <div style="height:8px; border-radius:6px; background:rgba(128,128,128,0.2); overflow:hidden;">
+            <div id="update-progress-bar" style="height:100%; width:0%; background:var(--accent); transition:width 0.3s linear;"></div>
+          </div>
+          <div id="update-progress-label" style="font-size:11.5px; color:var(--text-secondary); margin-top:8px;">Mengunduh... 0%</div>
+        </div>
+
+        <button id="btn-install-update" style="margin-top:18px; width:100%; padding:11px; border:none; border-radius:10px; background:var(--accent); color:#08202b; font-weight:600; font-size:13px; cursor:pointer;">
+          Install build terbaru
+        </button>
+
+        <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--taskbar-border);">
+          <div style="font-size:11.5px; font-weight:600; margin-bottom:6px; color:var(--text-secondary);">Yang baru di ${OS.nextBuild}:</div>
+          <ul style="margin:0; padding-left:18px; font-size:11.5px; color:var(--text-secondary); line-height:1.9;">
+            <li>Search bar desktop kini bisa digeser bebas ke posisi mana pun</li>
+            <li>Peningkatan performa dan responsivitas sistem</li>
+            <li>Tampilan UI rounded baru terinspirasi Windows 11</li>
+            <li>Aplikasi di desktop kini bisa disembunyikan dari Pengaturan</li>
+          </ul>
+        </div>
+      ` : `
+        <div style="margin-top:18px; padding:14px 16px; border-radius:12px; background:rgba(128,128,128,0.12); font-size:11.5px; color:var(--text-secondary); line-height:1.6;">
+          🎉 Anda telah memperbarui ke build terbaru. Fitur baru sudah aktif: search bar dapat digeser, performa meningkat, tampilan UI rounded, dan aplikasi desktop dapat disembunyikan lewat menu klik kanan atau Preferences.
+        </div>
+      `}
+    </div>
+  `;
+
+  if(!alreadyUpdated){
+    content.querySelector("#btn-install-update").addEventListener("click", () => {
+      runUpdateGimmick(content);
+    });
+  }
+}
+
+function runUpdateGimmick(content){
+  const btn = content.querySelector("#btn-install-update");
+  const wrap = content.querySelector("#update-progress-wrap");
+  const bar = content.querySelector("#update-progress-bar");
+  const label = content.querySelector("#update-progress-label");
+
+  btn.disabled = true;
+  btn.style.opacity = "0.5";
+  btn.textContent = "Mengunduh...";
+  wrap.style.display = "block";
+
+  const totalMs = 20000;
+  const stepMs = 200;
+  let elapsed = 0;
+
+  toast("Update dimulai", `Mengunduh ${OS.nextBuild}...`, "⬇️", 3000);
+
+  const timer = setInterval(() => {
+    elapsed += stepMs;
+    const pct = Math.min(100, Math.round((elapsed / totalMs) * 100));
+    bar.style.width = pct + "%";
+    label.textContent = `Mengunduh... ${pct}%`;
+
+    if(pct >= 100){
+      clearInterval(timer);
+      label.textContent = "Unduhan selesai. Menyiapkan instalasi...";
+      btn.textContent = "Restart untuk menyelesaikan";
+      btn.disabled = false;
+      btn.style.opacity = "1";
+      btn.onclick = () => {
+        OS.settings._updated = true;
+        saveSettings();
+        toast("Siap diinstal", "Restart untuk menyelesaikan pembaruan.", "🔄", 3000);
+        setTimeout(() => {
+          rebootOS();
+          setTimeout(() => {
+            OS.apps.find(a=>a.id==="settings"); // noop
+            toast("Update selesai", `Chromium OS telah diperbarui ke ${OS.nextBuild}.`, "✅", 5000);
+          }, 2000);
+        }, 700);
+      };
+    }
+  }, stepMs);
+}
+
+/* ============ FILES ============ */
+function openFiles(){
+  const w = createWindow("files", {
+    title:"File Explorer", w:680, h:460, supportsTabs:true,
+    content:""
+  });
+  w.tabs[0].title = "This PC";
+  w.tabs[0].render = (body) => {
+    body.innerHTML = `
+      <div style="padding:20px;">
+        <div style="font-size:15px; font-weight:600; margin-bottom:14px;">This PC</div>
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:14px;">
+          ${["Documents","Downloads","Pictures","Music","Videos","Desktop"].map(f => `
+            <div style="display:flex; flex-direction:column; align-items:center; gap:8px; padding:14px 6px; border-radius:12px; cursor:default;" onmouseover="this.style.background='rgba(128,128,128,0.12)'" onmouseout="this.style.background='transparent'">
+              <div style="font-size:30px;">📁</div>
+              <div style="font-size:12px;">${f}</div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  };
+  renderActiveTabContent(w);
+}
+
+/* ============ NOTES ============ */
+function openNotes(){
+  const w = createWindow("notes", {
+    title:"Notes", w:460, h:420, supportsTabs:true, content:""
+  });
+  w.tabs[0].title = "Untitled";
+  w.tabs[0].render = (body) => {
+    body.innerHTML = `<textarea placeholder="Mulai menulis..." style="width:100%; height:100%; border:none; outline:none; resize:none; background:transparent; color:var(--text-primary); font-size:14px; padding:18px; font-family:inherit;"></textarea>`;
+  };
+  renderActiveTabContent(w);
+}
+
+/* ============ TERMINAL ============ */
+const TERM_STATE = {
+  cwd: "C:\\Users\\User",
+  history: [],
+  histIdx: -1,
+  vars: { USERNAME:"User", COMPUTERNAME:"CHROMIUM-OS", OS:"Chromium OS", PATH:"C:\\Windows\\System32" },
+  fs: {
+    "C:\\Users\\User": ["Desktop","Documents","Downloads","Pictures","Music","Videos"],
+    "C:\\Users\\User\\Desktop": [],
+    "C:\\Users\\User\\Documents": ["notes.txt"],
+    "C:\\Users\\User\\Downloads": [],
+    "C:\\Users\\User\\Pictures": [],
+    "C:\\Users\\User\\Music": [],
+    "C:\\Users\\User\\Videos": [],
+  }
+};
+
+function openTerminal(){
+  const w = createWindow("terminal", {
+    title:"Terminal", w:640, h:420, supportsTabs:false, content:""
+  });
+  w.tabs[0].render = (body) => {
+    body.innerHTML = `
+      <div id="term-root" style="background:#0b0d10; height:100%; padding:14px; font-family:'Cascadia Code',Consolas,monospace; font-size:12.5px; color:#7CFC9A; overflow:auto;">
+        <div>Chromium OS Terminal [Version ${OS.version}]</div>
+        <div style="margin-top:6px; color:#666;">Ketik 'help' untuk daftar perintah (100+ perintah gaya Windows CMD tersedia).</div>
+        <div id="term-log" style="margin-top:8px; white-space:pre-wrap;"></div>
+        <div style="display:flex; gap:6px; margin-top:6px;">
+          <span id="term-prompt">${TERM_STATE.cwd}&gt;</span>
+          <input id="term-input" autocomplete="off" spellcheck="false" style="background:transparent; border:none; outline:none; color:#7CFC9A; flex:1; font-family:inherit; font-size:12.5px;">
+        </div>
+      </div>
+    `;
+    const input = body.querySelector("#term-input");
+    const log = body.querySelector("#term-log");
+    const promptEl = body.querySelector("#term-prompt");
+    const root = body.querySelector("#term-root");
+    input.focus();
+    root.addEventListener("click", () => input.focus());
+
+    function printLine(text, color){
+      const line = document.createElement("div");
+      if(color) line.style.color = color;
+      line.textContent = text;
+      log.appendChild(line);
+    }
+
+    input.addEventListener("keydown", (e) => {
+      if(e.key === "Enter"){
+        const cmd = input.value;
+        printLine(promptEl.textContent + " " + cmd);
+        if(cmd.trim() !== ""){
+          TERM_STATE.history.push(cmd);
+          TERM_STATE.histIdx = TERM_STATE.history.length;
+        }
+        const result = handleTerminalCmd(cmd.trim(), { clear: () => { log.innerHTML = ""; } });
+        if(result !== null && result !== undefined && result !== ""){
+          printLine(result, "#9aa0ab");
+        }
+        promptEl.textContent = TERM_STATE.cwd + ">";
+        input.value = "";
+        body.scrollTop = body.scrollHeight;
+      } else if(e.key === "ArrowUp"){
+        e.preventDefault();
+        if(TERM_STATE.histIdx > 0){
+          TERM_STATE.histIdx--;
+          input.value = TERM_STATE.history[TERM_STATE.histIdx] || "";
+        }
+      } else if(e.key === "ArrowDown"){
+        e.preventDefault();
+        if(TERM_STATE.histIdx < TERM_STATE.history.length - 1){
+          TERM_STATE.histIdx++;
+          input.value = TERM_STATE.history[TERM_STATE.histIdx] || "";
+        } else {
+          TERM_STATE.histIdx = TERM_STATE.history.length;
+          input.value = "";
+        }
+      } else if(e.key === "Tab"){
+        e.preventDefault();
+        const partial = input.value.split(" ").pop().toLowerCase();
+        const match = Object.keys(TERM_COMMANDS).find(c => c.startsWith(partial));
+        if(match){
+          const parts = input.value.split(" ");
+          parts[parts.length-1] = match;
+          input.value = parts.join(" ");
+        }
+      }
+    });
+  };
+  renderActiveTabContent(w);
+}
+
+/* ---- 100+ perintah bergaya Windows CMD/PowerShell (simulasi lokal, tidak menyentuh sistem nyata) ---- */
+const TERM_COMMANDS = {
+  help: () => Object.keys(TERM_COMMANDS).sort().join("  "),
+  "?": () => TERM_COMMANDS.help(),
+  cls: (a, ctx) => { ctx.clear(); return ""; },
+  clear: (a, ctx) => TERM_COMMANDS.cls(a, ctx),
+  ver: () => "Chromium OS [Version " + OS.version + "]",
+  version: () => TERM_COMMANDS.ver(),
+  date: () => "Tanggal saat ini: " + new Date().toLocaleDateString("id-ID"),
+  time: () => "Waktu saat ini: " + new Date().toLocaleTimeString("id-ID"),
+  echo: (a) => a.join(" "),
+  whoami: () => TERM_STATE.vars.USERNAME.toLowerCase(),
+  hostname: () => TERM_STATE.vars.COMPUTERNAME,
+  cd: (a) => {
+    if(a.length === 0) return TERM_STATE.cwd;
+    let target = a.join(" ");
+    if(target === "..") {
+      const parts = TERM_STATE.cwd.split("\\");
+      if(parts.length > 1){ parts.pop(); TERM_STATE.cwd = parts.join("\\") || "C:"; }
+      return "";
+    }
+    if(target === "\\" || target === "/") { TERM_STATE.cwd = "C:\\"; return ""; }
+    const newPath = target.includes(":") ? target : TERM_STATE.cwd + "\\" + target;
+    if(TERM_STATE.fs[newPath] !== undefined){ TERM_STATE.cwd = newPath; return ""; }
+    return "Sistem tidak dapat menemukan jalur yang ditentukan.";
+  },
+  chdir: (a) => TERM_COMMANDS.cd(a),
+  dir: () => {
+    const items = TERM_STATE.fs[TERM_STATE.cwd] || [];
+    if(items.length === 0) return " Direktori ini kosong.";
+    return " Direktori dari " + TERM_STATE.cwd + "\n\n" + items.map(i => "  " + i).join("\n");
+  },
+  ls: () => TERM_COMMANDS.dir(),
+  mkdir: (a) => {
+    if(a.length === 0) return "Sintaks perintah salah.";
+    const name = a.join(" ");
+    const list = TERM_STATE.fs[TERM_STATE.cwd] || (TERM_STATE.fs[TERM_STATE.cwd] = []);
+    if(!list.includes(name)) list.push(name);
+    TERM_STATE.fs[TERM_STATE.cwd + "\\" + name] = [];
+    return "";
+  },
+  md: (a) => TERM_COMMANDS.mkdir(a),
+  rmdir: (a) => {
+    const name = a.join(" ");
+    const list = TERM_STATE.fs[TERM_STATE.cwd] || [];
+    const idx = list.indexOf(name);
+    if(idx === -1) return "Sistem tidak dapat menemukan berkas yang ditentukan.";
+    list.splice(idx,1);
+    delete TERM_STATE.fs[TERM_STATE.cwd + "\\" + name];
+    return "";
+  },
+  rd: (a) => TERM_COMMANDS.rmdir(a),
+  del: (a) => a.length ? "" : "Sintaks perintah salah.",
+  erase: (a) => TERM_COMMANDS.del(a),
+  copy: (a) => a.length >= 2 ? "        1 file(s) copied." : "Sintaks perintah salah.",
+  xcopy: (a) => TERM_COMMANDS.copy(a),
+  move: (a) => a.length >= 2 ? "        1 file(s) moved." : "Sintaks perintah salah.",
+  ren: (a) => a.length >= 2 ? "" : "Sintaks perintah salah.",
+  rename: (a) => TERM_COMMANDS.ren(a),
+  type: (a) => a.length ? "(simulasi) Menampilkan isi berkas " + a.join(" ") : "Sintaks perintah salah.",
+  more: (a) => TERM_COMMANDS.type(a),
+  find: (a) => "Mencari '" + a.join(" ") + "' ... 0 hasil ditemukan.",
+  findstr: (a) => TERM_COMMANDS.find(a),
+  tree: () => Object.keys(TERM_STATE.fs).filter(k => k.startsWith(TERM_STATE.cwd)).join("\n"),
+  path: () => "PATH=" + TERM_STATE.vars.PATH,
+  set: (a) => {
+    if(a.length === 0) return Object.entries(TERM_STATE.vars).map(([k,v]) => k+"="+v).join("\n");
+    const [k,v] = a.join(" ").split("=");
+    if(v !== undefined){ TERM_STATE.vars[k] = v; return ""; }
+    return TERM_STATE.vars[k] ? k + "=" + TERM_STATE.vars[k] : "Variabel lingkungan " + k + " tidak terdefinisi.";
+  },
+  setx: (a) => TERM_COMMANDS.set(a),
+  pwd: () => TERM_STATE.cwd,
+  exit: () => "(gunakan tombol close pada jendela untuk menutup terminal)",
+  systeminfo: () => [
+    "Nama Host OS:            " + TERM_STATE.vars.COMPUTERNAME,
+    "Nama OS:                 Chromium OS " + OS.version,
+    "Versi OS:                " + OS.version,
+    "Produsen Sistem:         Virtual",
+    "Tipe Sistem:             x64-based PC",
+    "Total Memori Fisik:      8.192 MB",
+  ].join("\n"),
+  tasklist: () => Object.values(OS.windows).filter(w => !w.closed).map(w => (w.appId||"app").padEnd(20) + "Running").join("\n") || "Tidak ada proses berjalan.",
+  taskkill: (a) => a.length ? "SUKSES: Operasi penghentian diproses untuk \"" + a.join(" ") + "\"." : "Sintaks perintah salah.",
+  ping: (a) => {
+    const host = a[0] || "127.0.0.1";
+    return `Melakukan ping ${host} dengan 32 byte data:\nBalasan dari ${host}: bytes=32 time<1ms TTL=64\nBalasan dari ${host}: bytes=32 time<1ms TTL=64\nBalasan dari ${host}: bytes=32 time<1ms TTL=64\nBalasan dari ${host}: bytes=32 time<1ms TTL=64\n\nStatistik Ping untuk ${host}:\n    Paket: Terkirim = 4, Diterima = 4, Hilang = 0 (0% hilang)`;
+  },
+  ipconfig: () => [
+    "Konfigurasi IP Windows",
+    "",
+    "Adapter Ethernet:",
+    "   Alamat IPv4. . . . . . . . . . . : 192.168.1.42",
+    "   Subnet Mask . . . . . . . . . . . : 255.255.255.0",
+    "   Gateway Default . . . . . . . . . : 192.168.1.1",
+  ].join("\n"),
+  ifconfig: () => TERM_COMMANDS.ipconfig(),
+  netstat: () => "Koneksi Aktif\n\n  Proto  Alamat Lokal          Alamat Asing         Status\n  TCP    192.168.1.42:5432      0.0.0.0:0            LISTENING",
+  nslookup: (a) => "Server: resolver.local\nAddress: 192.168.1.1\n\nNama: " + (a[0]||"localhost") + "\nAddress: 93.184.216.34",
+  tracert: (a) => "Melacak rute ke " + (a[0]||"host") + " ...\n  1    <1 ms    <1 ms    <1 ms  192.168.1.1\n  2     5 ms     4 ms     5 ms  10.0.0.1\nRute selesai.",
+  shutdown: () => { shutdownOS(); return "Sistem akan dimatikan."; },
+  restart: () => { rebootOS(); return "Sistem akan dimulai ulang."; },
+  logoff: () => "Sesi pengguna diakhiri (simulasi).",
+  color: () => "Warna teks terminal diubah (simulasi).",
+  title: (a) => { const w = findWindowByAppId("terminal"); if(w) w.el.querySelector(".win-titletext").textContent = a.join(" ")||"Terminal"; return ""; },
+  vol: () => "Volume dalam drive C tidak berlabel.\nNomor Seri Volume adalah 1A2B-3C4D",
+  fsutil: () => "(simulasi) Utilitas sistem berkas.",
+  chkdsk: () => "Memeriksa berkas sistem...\nTidak ada masalah ditemukan pada C:.",
+  format: () => "PERINGATAN: Ini akan menghapus SEMUA DATA di drive. (dinonaktifkan dalam simulasi)",
+  attrib: (a) => "Atribut berkas " + (a.join(" ")||"") + ": A",
+  comp: () => "File dibandingkan OK",
+  fc: () => TERM_COMMANDS.comp(),
+  sort: () => "(simulasi) Mengurutkan input.",
+  clip: (a) => a.length ? "Teks disalin ke papan klip (simulasi)." : "",
+  power: () => "Skema daya aktif: Seimbang",
+  powercfg: () => TERM_COMMANDS.power(),
+  driverquery: () => "Nama Modul   Nama Tampilan          Tipe Driver\n-----------  ---------------------  -----------\nvirtdisk     Virtual Disk Driver    Kernel",
+  sfc: () => "Memulai pemindaian sistem... Windows Resource Protection tidak menemukan pelanggaran integritas.",
+  gpupdate: () => "Memperbarui kebijakan...\nPembaruan Kebijakan Komputer selesai berhasil.\nPembaruan Kebijakan Pengguna selesai berhasil.",
+  gpresult: () => "(simulasi) Menampilkan Hasil Kebijakan Grup.",
+  net: (a) => {
+    const sub = (a[0]||"").toLowerCase();
+    if(sub === "user") return TERM_STATE.vars.USERNAME + "\nAdministrator\nGuest";
+    if(sub === "view") return "Nama Server\n-----------\n\\\\CHROMIUM-OS";
+    return "Sintaks perintah salah. Coba: net user, net view";
+  },
+  reg: () => "(simulasi) Operasi Windows Registry.",
+  wmic: () => "(simulasi) Windows Management Instrumentation Command-line.",
+  schtasks: () => "Tidak ada tugas terjadwal yang ditemukan.",
+  robocopy: (a) => a.length >= 2 ? "------------------------------------------------------------------------------\n   ROBOCOPY :: Utilitas Penyalinan Berkas yang Kuat\n------------------------------------------------------------------------------\n\n   File(s) Copied :        1" : "Sintaks perintah salah.",
+  where: (a) => a.length ? "C:\\Windows\\System32\\" + a[0] + ".exe" : "Sintaks perintah salah.",
+  which: (a) => TERM_COMMANDS.where(a),
+  assoc: () => ".txt=txtfile\n.exe=exefile\n.html=htmlfile",
+  ftype: () => "txtfile=notepad.exe %1",
+  label: (a) => "Label volume drive C diubah menjadi " + (a.join(" ")||"(tanpa label)"),
+  subst: () => "(simulasi) Substitusi drive virtual.",
+  diskpart: () => "Microsoft DiskPart versi (simulasi)\n\nDISKPART>",
+  msinfo32: () => "(simulasi) Membuka Informasi Sistem...",
+  dxdiag: () => "(simulasi) Menjalankan DirectX Diagnostic Tool...",
+  notepad: () => { openApp("notes"); return "Membuka Notes..."; },
+  explorer: () => { openApp("files"); return "Membuka File Explorer..."; },
+  control: () => { openApp("settings"); return "Membuka Control Panel (Settings)..."; },
+  start: (a) => {
+    const target = (a.join(" ")||"").toLowerCase();
+    const found = OS.apps.find(app => app.name.toLowerCase().includes(target) || app.id === target);
+    if(found){ openApp(found.id); return "Memulai " + found.name + "..."; }
+    return "Tidak dapat menemukan aplikasi '" + a.join(" ") + "'.";
+  },
+  run: (a) => TERM_COMMANDS.start(a),
+  history: () => TERM_STATE.history.join("\n") || "(kosong)",
+  alias: () => "doskey /macros",
+  doskey: () => "Makro doskey tersimpan (simulasi).",
+  pause: () => "Tekan tombol apa saja untuk melanjutkan . . .",
+  timeout: (a) => "Menunggu " + (a[0]||"5") + " detik, tekan tombol apa saja untuk melanjutkan...",
+  sleep: (a) => TERM_COMMANDS.timeout(a),
+  hostip: () => "192.168.1.42",
+  getmac: () => "Alamat Fisik      Nama Transport\n=================  ==========================================\n00-15-5D-3A-2B-1C  \\Device\\Tcpip_{VIRTUAL}",
+  arp: () => "Antarmuka: 192.168.1.42\n  Alamat Internet      Alamat Fisik       Tipe\n  192.168.1.1          aa-bb-cc-dd-ee-ff  dinamis",
+  route: () => "===========================================================================\nDaftar Rute Aktif\nTujuan Jaringan     Netmask     Gateway    Antarmuka   Metrik\n===========================================================================",
+  telnet: (a) => "Menghubungkan ke " + (a[0]||"host") + "... (dinonaktifkan dalam simulasi)",
+  curl: (a) => a.length ? "(simulasi) Mengambil " + a[0] + " ... 200 OK" : "Sintaks perintah salah.",
+  wget: (a) => TERM_COMMANDS.curl(a),
+  hash: (a) => "SHA256: " + Array.from(a.join(" ")).reduce((h,c)=>((h<<5)-h+c.charCodeAt(0))|0,0).toString(16).padStart(8,'0').repeat(4).slice(0,64),
+  certutil: () => "(simulasi) Utilitas sertifikat.",
+  cipher: () => "Meng-enkripsi direktori... (simulasi)",
+  icacls: () => "(simulasi) Menampilkan izin akses.",
+  takeown: () => "SUKSES: Berkas kepemilikan diambil (simulasi).",
+  runas: () => "(simulasi) Menjalankan sebagai pengguna lain.",
+  neofetch: () => [
+    "        .---.        " + TERM_STATE.vars.USERNAME + "@" + TERM_STATE.vars.COMPUTERNAME,
+    "       /     \\       -----------------------",
+    "       \\.@-@./       OS: Chromium OS " + OS.version,
+    "       /`\\_/`\\       Shell: chrterm",
+    "      //  _  \\\\      Uptime: " + Math.floor(performance.now()/1000) + "s",
+    "     | \\     )|_     Theme: " + OS.settings.theme,
+    "    /`\\_`>  <_/ \\    ",
+  ].join("\n"),
+  fortune: () => {
+    const list = ["Kesabaran adalah kunci sukses.","Kode yang baik adalah kode yang mudah dibaca.","Hari ini adalah kesempatan baru.","Debug dengan tenang, hasil akan lebih baik."];
+    return list[Math.floor(Math.random()*list.length)];
+  },
+  cowsay: (a) => { const t = a.join(" ")||"Moo!"; return " " + "_".repeat(t.length+2) + "\n< " + t + " >\n " + "-".repeat(t.length+2) + "\n        \\   ^__^\n         \\  (oo)\\_______\n            (__)\\       )\\/\\\n                ||----w |\n                ||     ||"; },
+  credits: () => "Chromium OS — dibuat dengan HTML, CSS & JavaScript.",
+  about: () => { openApp("about"); return "Membuka About This OS..."; },
+  settings: () => { openApp("settings"); return "Membuka Settings..."; },
+  apps: () => OS.apps.map(a => a.id + " - " + a.name).join("\n"),
+  open: (a) => TERM_COMMANDS.start(a),
+};
+
+function findWindowByAppId(appId){
+  return Object.values(OS.windows).find(w => !w.closed && w.appId === appId);
+}
+
+function handleTerminalCmd(cmd, ctx){
+  if(cmd === "") return "";
+  const parts = cmd.split(" ").filter(Boolean);
+  const name = parts[0].toLowerCase();
+  const args = parts.slice(1);
+  if(TERM_COMMANDS[name]) return TERM_COMMANDS[name](args, ctx);
+  return `'${parts[0]}' tidak dikenali sebagai perintah internal atau eksternal.\nKetik 'help' untuk daftar perintah yang tersedia.`;
+}
+
+/* ============ ABOUT ============ */
+function openAbout(){
+  const w = createWindow("about", {
+    title:"About This OS", w:420, h:380, supportsTabs:false, content:""
+  });
+  w.tabs[0].render = (body) => {
+    body.innerHTML = `
+      <div style="padding:26px; text-align:center;">
+        <div style="font-size:44px; margin-bottom:10px;">🖥️</div>
+        <div style="font-size:18px; font-weight:700;">Chromium OS</div>
+        <div style="font-size:12.5px; color:var(--text-secondary); margin-top:4px;">${OS.settings._updated ? OS.nextBuild : OS.version}</div>
+        <div style="margin-top:20px; text-align:left; font-size:12px; color:var(--text-secondary); line-height:2;">
+          <div>Taskbar: gaya Windows 11</div>
+          <div>Jendela: tab gaya macOS</div>
+          <div>Browser: terintegrasi dengan OS</div>
+          <div>Tema: dapat disesuaikan penuh</div>
+        </div>
+      </div>
+    `;
+  };
+  renderActiveTabContent(w);
+}
+
+/* ============================================================
+   CONTEXT MENU (right click)
+   ============================================================ */
+function openCustomMenu(x, y, items){
+  const menu = document.getElementById("ctx-menu");
+  menu.innerHTML = "";
+  items.forEach(it => {
+    if(it.sep){
+      const s = document.createElement("div");
+      s.className = "ctx-sep";
+      menu.appendChild(s);
+      return;
+    }
+    const el = document.createElement("div");
+    el.className = "ctx-item" + (it.disabled ? " disabled" : "");
+    el.innerHTML = `<span class="ctx-ico">${it.icon || ""}</span><span>${it.label}</span>`;
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      menu.classList.remove("open");
+      if(it.action) it.action();
+    });
+    menu.appendChild(el);
+  });
+
+  menu.style.left = "0px"; menu.style.top = "0px";
+  menu.classList.add("open");
+  const rect = menu.getBoundingClientRect();
+  let left = x, top = y;
+  if(left + rect.width > window.innerWidth - 8) left = window.innerWidth - rect.width - 8;
+  if(top + rect.height > window.innerHeight - 8) top = window.innerHeight - rect.height - 8;
+  menu.style.left = left + "px";
+  menu.style.top = top + "px";
+}
+
+function initContextMenu(){
+  document.getElementById("desktop").addEventListener("contextmenu", (e) => {
+    // avoid double-trigger when icon/search already handled it
+    if(e.target.closest(".desk-icon") || e.target.closest("#desktop-search") || e.target.closest(".app-window") || e.target.closest("#taskbar")) return;
+    e.preventDefault();
+    showDesktopContextMenu(e);
+  });
+
+  document.getElementById("taskbar").addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    openCustomMenu(e.clientX, e.clientY - 90, [
+      { label:"Pengaturan taskbar", icon:"⚙️", action: () => openApp("settings") },
+      { label:"Tampilkan desktop", icon:"🖥️", action: () => minimizeAllWindows() },
+    ]);
+  });
+
+  document.getElementById("desktop-search").addEventListener("contextmenu", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    openCustomMenu(e.clientX, e.clientY, [
+      { label:"Sembunyikan search bar", icon:"🙈", action: () => {
+        OS.settings.showSearchBar = false; applySettingsToDOM(); saveSettings();
+        toast("Search bar disembunyikan", "Aktifkan lagi lewat Settings > Browser.", "🌐");
+      }},
+      { label:"Buka pengaturan browser", icon:"⚙️", action: () => openApp("settings") },
+    ]);
+  });
+}
+
+function showDesktopContextMenu(e){
+  const items = [
+    { label:"Urutkan berdasarkan", icon:"↕️", disabled:true },
+    { label:"Refresh", icon:"🔄", action: () => { renderDesktopIcons(); toast("Desktop", "Desktop disegarkan.", "🔄", 2000); } },
+    { sep:true },
+    { label:"Wallpaper", icon:"🖼️", action: () => openSettingsAt("preferences") },
+    { label:"Tampilan (Display settings)", icon:"🖥️", action: () => openSettingsAt("display") },
+    { sep:true },
+    { label:"Kelola aplikasi tersembunyi", icon:"👁️", action: () => showHiddenAppsMenu(e) },
+    { sep:true },
+    { label:"Pengaturan", icon:"⚙️", action: () => openApp("settings") },
+  ];
+  openCustomMenu(e.clientX, e.clientY, items);
+}
+
+function showAppIconContextMenu(e, app){
+  const isHidden = !!OS.settings.hiddenApps[app.id];
+  const items = [
+    { label:"Buka", icon:"↗️", action: () => openApp(app.id) },
+    { sep:true },
+    { label: isHidden ? "Tampilkan di desktop" : "Sembunyikan dari desktop", icon: isHidden ? "👁️" : "🙈", action: () => {
+      OS.settings.hiddenApps[app.id] = !isHidden;
+      saveSettings();
+      renderDesktopIcons();
+      toast(isHidden ? "Ditampilkan" : "Disembunyikan", `${app.name} ${isHidden ? "ditampilkan kembali" : "disembunyikan"} di desktop.`, "🗂️", 2500);
+    }},
+    { sep:true },
+    { label:"Properties", icon:"ℹ️", disabled:true },
+  ];
+  openCustomMenu(e.clientX, e.clientY, items);
+}
+
+function showHiddenAppsMenu(e){
+  const hidden = OS.apps.filter(a => OS.settings.hiddenApps[a.id]);
+  if(hidden.length === 0){
+    toast("Tidak ada aplikasi tersembunyi", "Klik kanan sebuah ikon untuk menyembunyikannya.", "🙈", 2800);
+    return;
+  }
+  const items = hidden.map(app => ({
+    label: "Tampilkan " + app.name, icon: app.icon,
+    action: () => {
+      delete OS.settings.hiddenApps[app.id];
+      saveSettings();
+      renderDesktopIcons();
+      toast("Ditampilkan", `${app.name} ditampilkan kembali.`, "👁️", 2000);
+    }
+  }));
+  openCustomMenu(e.clientX, e.clientY, items);
+}
+
+function openSettingsAt(section){
+  openApp("settings");
+  setTimeout(() => {
+    const w = Object.values(OS.windows).find(x => x.appId === "settings" && !x.closed);
+    if(w){
+      const body = w.el.querySelector(".win-body");
+      renderSettingsApp(body, section);
+    }
+  }, 60);
+}
+
+function minimizeAllWindows(){
+  Object.keys(OS.windows).forEach(id => minimizeWindow(id));
+}
+
+</script>
+</body>
+</html>
