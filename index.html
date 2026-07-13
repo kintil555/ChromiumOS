@@ -430,6 +430,8 @@ const OS = {
     { id:"settings", name:"Settings", icon:"⚙️", pinned:true },
     { id:"notes", name:"Notes", icon:"📝", pinned:true },
     { id:"terminal", name:"Terminal", icon:"⌥", pinned:false },
+    { id:"calculator", name:"Calculator", icon:"🧮", pinned:false },
+    { id:"taskmanager", name:"Task Manager", icon:"📊", pinned:false },
     { id:"about", name:"About This OS", icon:"ℹ️", pinned:false },
   ]
 };
@@ -528,6 +530,97 @@ function saveSettings(){
   try{ localStorage.setItem("chromiumos_settings", JSON.stringify(OS.settings)); }catch(e){}
 }
 
+/* ============================================================
+   VIRTUAL FILE SYSTEM (VFS)
+   Struktur: { "/Documents": { type:"folder", children:{ "notes.txt": {type:"file", content:"...", modified: ts} } } }
+   Dipakai bersama oleh File Explorer & Notes.
+   ============================================================ */
+const VFS_ROOT_FOLDERS = ["Documents","Downloads","Pictures","Music","Videos","Desktop"];
+
+function vfsDefault(){
+  const root = {};
+  VFS_ROOT_FOLDERS.forEach(f => { root[f] = { type:"folder", children:{} }; });
+  root["Documents"].children["Welcome.txt"] = { type:"file", content:"Selamat datang di File Explorer!\n\nSekarang kamu bisa membuat, membuka, mengganti nama, dan menghapus file & folder sungguhan di sini. Semua tersimpan otomatis.", modified: Date.now() };
+  return root;
+}
+
+let VFS = null;
+function vfsLoad(){
+  try{
+    const raw = localStorage.getItem("chromiumos_vfs");
+    VFS = raw ? JSON.parse(raw) : vfsDefault();
+  }catch(e){ VFS = vfsDefault(); }
+}
+function vfsSave(){
+  try{ localStorage.setItem("chromiumos_vfs", JSON.stringify(VFS)); }catch(e){}
+}
+// path contoh: "/Documents/sub/foo.txt" -> array ["Documents","sub","foo.txt"]
+function vfsPathParts(path){
+  return path.split("/").filter(Boolean);
+}
+function vfsGetNode(path){
+  const parts = vfsPathParts(path);
+  let node = { type:"folder", children: VFS };
+  for(const part of parts){
+    if(!node.children || !node.children[part]) return null;
+    node = node.children[part];
+  }
+  return node;
+}
+function vfsGetParentChildren(path){
+  const parts = vfsPathParts(path);
+  const name = parts.pop();
+  let node = { type:"folder", children: VFS };
+  for(const part of parts){
+    if(!node.children || !node.children[part]) return null;
+    node = node.children[part];
+  }
+  return { children: node.children, name };
+}
+function vfsCreateFile(path, content=""){
+  const p = vfsGetParentChildren(path);
+  if(!p || p.children[p.name]) return false;
+  p.children[p.name] = { type:"file", content, modified: Date.now() };
+  vfsSave();
+  return true;
+}
+function vfsCreateFolder(path){
+  const p = vfsGetParentChildren(path);
+  if(!p || p.children[p.name]) return false;
+  p.children[p.name] = { type:"folder", children:{} };
+  vfsSave();
+  return true;
+}
+function vfsDelete(path){
+  const p = vfsGetParentChildren(path);
+  if(!p || !p.children[p.name]) return false;
+  delete p.children[p.name];
+  vfsSave();
+  return true;
+}
+function vfsRename(path, newName){
+  const p = vfsGetParentChildren(path);
+  if(!p || !p.children[p.name] || p.children[newName]) return false;
+  p.children[newName] = p.children[p.name];
+  delete p.children[p.name];
+  vfsSave();
+  return true;
+}
+function vfsWriteFile(path, content){
+  const node = vfsGetNode(path);
+  if(!node || node.type !== "file") return false;
+  node.content = content;
+  node.modified = Date.now();
+  vfsSave();
+  return true;
+}
+function vfsList(path){
+  const node = path === "/" || path === "" ? { type:"folder", children: VFS } : vfsGetNode(path);
+  if(!node || node.type !== "folder") return [];
+  return Object.entries(node.children).map(([name, n]) => ({ name, ...n }))
+    .sort((a,b) => (a.type===b.type ? a.name.localeCompare(b.name) : (a.type==="folder"?-1:1)));
+}
+
 const WALLPAPERS = {
   default: "linear-gradient(135deg, #0f2027, #203a43 50%, #2c5364)",
   aurora: "linear-gradient(135deg, #1a2980, #26d0ce)",
@@ -540,6 +633,7 @@ const WALLPAPERS = {
 /* ============ BOOT ============ */
 window.addEventListener("DOMContentLoaded", () => {
   loadSettings();
+  vfsLoad();
   setTimeout(() => {
     document.getElementById("boot-screen").classList.add("hide");
     initOS();
@@ -1023,14 +1117,17 @@ function restoreWindow(id){
   w.el.classList.remove("minimized");
   focusWindow(id);
 }
-function toggleMaximize(id){
+function toggleMaximize(id, force){
   const w = OS.windows[id];
   if(!w) return;
-  if(!w.maximized){
-    w._pre = { x:w.el.offsetLeft, y:w.el.offsetTop, width:w.el.style.width, height:w.el.style.height };
+  if(!w.maximized || force){
+    if(!w.maximized){
+      w._pre = { x:w.el.offsetLeft, y:w.el.offsetTop, width:w.el.style.width, height:w.el.style.height };
+    }
     w.el.style.left = "0px"; w.el.style.top = "0px";
     w.el.style.width = "100vw"; w.el.style.height = "calc(100vh - 64px)";
     w.maximized = true;
+    w.snapped = null;
     w.el.classList.add("maximized");
   } else {
     w.el.style.left = w._pre.x + "px";
@@ -1051,6 +1148,50 @@ function closeWindow(id){
   refreshRunningIndicators();
 }
 
+const SNAP_EDGE_PX = 6;
+function getSnapZone(clientX, clientY){
+  if(clientY <= SNAP_EDGE_PX) return "top";
+  if(clientX <= SNAP_EDGE_PX) return "left";
+  if(clientX >= window.innerWidth - SNAP_EDGE_PX) return "right";
+  return null;
+}
+function ensureSnapOverlay(){
+  let ov = document.getElementById("snap-overlay");
+  if(!ov){
+    ov = document.createElement("div");
+    ov.id = "snap-overlay";
+    ov.style.cssText = "position:fixed; pointer-events:none; background:rgba(76,194,255,0.22); border:2px solid var(--accent); border-radius:10px; z-index:9999; display:none; transition:all 0.08s ease;";
+    document.body.appendChild(ov);
+  }
+  return ov;
+}
+function showSnapPreview(zone){
+  const ov = ensureSnapOverlay();
+  if(!zone){ ov.style.display = "none"; return; }
+  ov.style.display = "block";
+  const taskbarH = 64;
+  if(zone === "top"){ ov.style.left="6px"; ov.style.top="6px"; ov.style.width=(window.innerWidth-12)+"px"; ov.style.height=(window.innerHeight-taskbarH-12)+"px"; }
+  else if(zone === "left"){ ov.style.left="6px"; ov.style.top="6px"; ov.style.width=(window.innerWidth/2-9)+"px"; ov.style.height=(window.innerHeight-taskbarH-12)+"px"; }
+  else if(zone === "right"){ ov.style.left=(window.innerWidth/2+3)+"px"; ov.style.top="6px"; ov.style.width=(window.innerWidth/2-9)+"px"; ov.style.height=(window.innerHeight-taskbarH-12)+"px"; }
+}
+function applySnap(w, zone){
+  const taskbarH = 64;
+  if(zone === "top"){
+    toggleMaximize(w.id, true);
+    return;
+  }
+  if(!w._pre){
+    w._pre = { x:w.el.offsetLeft, y:w.el.offsetTop, width:w.el.style.width, height:w.el.style.height };
+  }
+  w.maximized = false;
+  w.el.classList.remove("maximized");
+  w.el.style.top = "0px";
+  w.el.style.height = `calc(100vh - ${taskbarH}px)`;
+  if(zone === "left"){ w.el.style.left = "0px"; w.el.style.width = "50vw"; }
+  else if(zone === "right"){ w.el.style.left = "50vw"; w.el.style.width = "50vw"; }
+  w.snapped = zone;
+}
+
 function makeWindowDraggable(w){
   const bar = w.el.querySelector(".win-tabbar");
   let dragging = false, offX = 0, offY = 0;
@@ -1064,12 +1205,25 @@ function makeWindowDraggable(w){
   });
   window.addEventListener("mousemove", (e) => {
     if(!dragging) return;
+    // jika window sebelumnya di-snap dan mulai digeser lagi, lepas dari mode snap dan kembali ke ukuran sebelumnya (relatif ke posisi cursor)
+    if(w.snapped){
+      w.snapped = null;
+      if(w._pre){ w.el.style.width = w._pre.width; w.el.style.height = w._pre.height; }
+      offX = Math.min(offX, parseInt(w.el.style.width) - 40);
+    }
     let left = e.clientX - offX;
     let top = Math.max(0, e.clientY - offY);
     w.el.style.left = left + "px";
     w.el.style.top = top + "px";
+    showSnapPreview(getSnapZone(e.clientX, e.clientY));
   });
-  window.addEventListener("mouseup", () => { dragging = false; });
+  window.addEventListener("mouseup", (e) => {
+    if(!dragging) return;
+    dragging = false;
+    const zone = getSnapZone(e.clientX, e.clientY);
+    showSnapPreview(null);
+    if(zone) applySnap(w, zone);
+  });
 }
 
 function makeWindowResizable(w){
@@ -1100,6 +1254,8 @@ function openApp(appId, opts={}){
   if(appId === "files") return openFiles();
   if(appId === "notes") return openNotes();
   if(appId === "terminal") return openTerminal();
+  if(appId === "calculator") return openCalculator();
+  if(appId === "taskmanager") return openTaskManager();
   if(appId === "browstore"){
     if(!isFeatureUnlocked("browStore")){
       toast("Fitur terkunci", "BrowStore memerlukan update sistem ke build yang mendukungnya.", "🔒");
@@ -1709,40 +1865,226 @@ function runUpdateGimmick(content, targetBuildId){
 }
 
 /* ============ FILES ============ */
-function openFiles(){
+function filesIconFor(node, name){
+  if(node.type === "folder") return "📁";
+  const ext = name.split(".").pop().toLowerCase();
+  if(["txt","md","log"].includes(ext)) return "📄";
+  if(["png","jpg","jpeg","gif","webp"].includes(ext)) return "🖼️";
+  return "📃";
+}
+
+function openFiles(opts={}){
   const w = createWindow("files", {
-    title:"File Explorer", w:680, h:460, supportsTabs:true,
+    title:"File Explorer", w:720, h:480, supportsTabs:true,
     content:""
   });
+  const state = { path: opts.path || "/", selected: null };
   w.tabs[0].title = "This PC";
-  w.tabs[0].render = (body) => {
-    body.innerHTML = `
-      <div style="padding:20px;">
-        <div style="font-size:15px; font-weight:600; margin-bottom:14px;">This PC</div>
-        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:14px;">
-          ${["Documents","Downloads","Pictures","Music","Videos","Desktop"].map(f => `
-            <div style="display:flex; flex-direction:column; align-items:center; gap:8px; padding:14px 6px; border-radius:12px; cursor:default;" onmouseover="this.style.background='rgba(128,128,128,0.12)'" onmouseout="this.style.background='transparent'">
-              <div style="font-size:30px;">📁</div>
-              <div style="font-size:12px;">${f}</div>
+  w.tabs[0].render = (body) => renderFilesBody(body, w, state);
+  renderActiveTabContent(w);
+}
+
+function renderFilesBody(body, w, state){
+  const crumbs = ["This PC", ...vfsPathParts(state.path)];
+  const items = vfsList(state.path);
+
+  body.innerHTML = `
+    <div style="display:flex; flex-direction:column; height:100%;">
+      <div style="display:flex; align-items:center; gap:6px; padding:10px 14px; border-bottom:1px solid var(--taskbar-border); flex-shrink:0;">
+        <span class="fe-nav-btn" data-act="up" style="cursor:pointer; font-size:14px; opacity:${state.path==="/"?"0.35":"1"};" title="Naik satu level">⬅️</span>
+        <div style="display:flex; gap:4px; flex-wrap:wrap; font-size:12.5px; flex:1;">
+          ${crumbs.map((c,i) => `<span class="fe-crumb" data-idx="${i}" style="cursor:pointer; color:var(--accent);">${escapeHtml(c)}</span>${i<crumbs.length-1?'<span style="opacity:0.4;">/</span>':''}`).join("")}
+        </div>
+        <span class="fe-act" data-act="new-folder" title="Folder baru" style="cursor:pointer; font-size:14px;">📁+</span>
+        <span class="fe-act" data-act="new-file" title="File baru" style="cursor:pointer; font-size:14px;">📄+</span>
+      </div>
+      <div class="fe-grid" style="flex:1; overflow:auto; padding:16px; display:grid; grid-template-columns:repeat(auto-fill, 92px); gap:6px; align-content:start;">
+        ${items.length === 0 ? `<div style="grid-column:1/-1; color:var(--text-secondary); font-size:12.5px; padding:20px; text-align:center;">Folder kosong</div>` : items.map(it => `
+          <div class="fe-item" data-name="${escapeHtml(it.name)}" data-type="${it.type}" style="display:flex; flex-direction:column; align-items:center; gap:6px; padding:10px 4px; border-radius:10px; cursor:default; text-align:center;">
+            <div style="font-size:28px;">${filesIconFor(it, it.name)}</div>
+            <div style="font-size:11.5px; word-break:break-word; line-height:1.25;">${escapeHtml(it.name)}</div>
+          </div>
+        `).join("")}
+      </div>
+      <div style="padding:6px 14px; border-top:1px solid var(--taskbar-border); font-size:11px; color:var(--text-secondary); flex-shrink:0;">${items.length} item</div>
+    </div>
+  `;
+
+  function goto(path){ state.path = path; renderFilesBody(body, w, state); }
+
+  body.querySelector('[data-act="up"]').addEventListener("click", () => {
+    if(state.path === "/") return;
+    const parts = vfsPathParts(state.path);
+    parts.pop();
+    goto(parts.length ? "/"+parts.join("/") : "/");
+  });
+  body.querySelectorAll(".fe-crumb").forEach(el => {
+    el.addEventListener("click", () => {
+      const idx = parseInt(el.dataset.idx);
+      if(idx === 0){ goto("/"); return; }
+      goto("/" + crumbs.slice(1, idx+1).join("/"));
+    });
+  });
+  body.querySelector('[data-act="new-folder"]').addEventListener("click", () => {
+    const name = prompt("Nama folder baru:");
+    if(!name) return;
+    const path = (state.path === "/" ? "" : state.path) + "/" + name;
+    if(vfsCreateFolder(path)) renderFilesBody(body, w, state);
+    else toast("Gagal", "Nama sudah dipakai.", "⚠️");
+  });
+  body.querySelector('[data-act="new-file"]').addEventListener("click", () => {
+    let name = prompt("Nama file baru (contoh: catatan.txt):");
+    if(!name) return;
+    if(!name.includes(".")) name += ".txt";
+    const path = (state.path === "/" ? "" : state.path) + "/" + name;
+    if(vfsCreateFile(path, "")) renderFilesBody(body, w, state);
+    else toast("Gagal", "Nama sudah dipakai.", "⚠️");
+  });
+
+  body.querySelectorAll(".fe-item").forEach(el => {
+    const name = el.dataset.name;
+    const itemPath = (state.path === "/" ? "" : state.path) + "/" + name;
+    el.addEventListener("mouseover", () => el.style.background = "rgba(128,128,128,0.12)");
+    el.addEventListener("mouseout", () => el.style.background = "transparent");
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      body.querySelectorAll(".fe-item").forEach(i => i.style.outline = "none");
+      el.style.outline = "1.5px solid var(--accent)";
+      state.selected = name;
+    });
+    el.addEventListener("dblclick", () => {
+      if(el.dataset.type === "folder"){ goto(itemPath); }
+      else { openFileInAppropriateApp(itemPath); }
+    });
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const isFolder = el.dataset.type === "folder";
+      openCustomMenu(e.clientX, e.clientY, [
+        ...(isFolder ? [{ label:"Buka", icon:"📂", onClick:() => goto(itemPath) }] : [{ label:"Buka", icon:"📂", onClick:() => openFileInAppropriateApp(itemPath) }]),
+        { label:"Ganti nama", icon:"✏️", onClick:() => {
+          const newName = prompt("Nama baru:", name);
+          if(newName && newName !== name){
+            if(vfsRename(itemPath, newName)) renderFilesBody(body, w, state);
+            else toast("Gagal", "Nama sudah dipakai.", "⚠️");
+          }
+        }},
+        { label:"Hapus", icon:"🗑️", onClick:() => {
+          if(confirm(`Hapus "${name}"?`)){ vfsDelete(itemPath); renderFilesBody(body, w, state); }
+        }},
+      ]);
+    });
+  });
+}
+
+function openFileInAppropriateApp(path){
+  const node = vfsGetNode(path);
+  if(!node || node.type !== "file") return;
+  const ext = path.split(".").pop().toLowerCase();
+  if(["png","jpg","jpeg","gif","webp"].includes(ext)){
+    openPhotoViewer(path);
+  } else {
+    openNotes({ path });
+  }
+}
+
+/* ============ NOTES ============ */
+const NOTES_FOLDER = "/Documents";
+
+function notesList(){
+  return vfsList(NOTES_FOLDER).filter(it => it.type === "file" && it.name.toLowerCase().endsWith(".txt"));
+}
+
+function openNotes(opts={}){
+  const w = createWindow("notes", {
+    title:"Notes", w:620, h:440, supportsTabs:false, content:""
+  });
+  const state = { path: opts.path || null };
+  if(!state.path){
+    const existing = notesList();
+    state.path = existing.length ? (NOTES_FOLDER + "/" + existing[0].name) : null;
+  }
+  w.tabs[0].render = (body) => renderNotesBody(body, w, state);
+  renderActiveTabContent(w);
+}
+
+function renderNotesBody(body, w, state){
+  const list = notesList();
+  const activeNode = state.path ? vfsGetNode(state.path) : null;
+  const activeName = state.path ? vfsPathParts(state.path).pop() : null;
+
+  body.innerHTML = `
+    <div style="display:flex; height:100%;">
+      <div style="width:170px; border-right:1px solid var(--taskbar-border); display:flex; flex-direction:column; flex-shrink:0;">
+        <div style="padding:10px; border-bottom:1px solid var(--taskbar-border);">
+          <button id="notes-new-btn" style="width:100%; padding:7px; border-radius:8px; border:none; background:var(--accent); color:#0b0d10; font-weight:600; font-size:12px; cursor:pointer;">+ Catatan baru</button>
+        </div>
+        <div style="flex:1; overflow:auto;">
+          ${list.length === 0 ? `<div style="padding:14px; font-size:11.5px; color:var(--text-secondary);">Belum ada catatan</div>` : list.map(n => `
+            <div class="notes-item" data-name="${escapeHtml(n.name)}" style="padding:10px 12px; cursor:pointer; font-size:12.5px; border-left:2px solid ${NOTES_FOLDER+"/"+n.name===state.path?"var(--accent)":"transparent"}; background:${NOTES_FOLDER+"/"+n.name===state.path?"rgba(128,128,128,0.1)":"transparent"};">
+              <div style="font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(n.name.replace(/\.txt$/,""))}</div>
+              <div style="color:var(--text-secondary); font-size:10.5px; margin-top:2px;">${n.modified ? new Date(n.modified).toLocaleDateString("id-ID") : ""}</div>
             </div>
           `).join("")}
         </div>
       </div>
-    `;
-  };
-  renderActiveTabContent(w);
-}
+      <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
+        ${activeNode ? `
+          <div style="display:flex; align-items:center; gap:8px; padding:8px 14px; border-bottom:1px solid var(--taskbar-border);">
+            <span style="font-size:12px; font-weight:600; flex:1;">${escapeHtml(activeName)}</span>
+            <span id="notes-save-status" style="font-size:10.5px; color:var(--text-secondary);">Tersimpan</span>
+            <span id="notes-delete-btn" title="Hapus catatan" style="cursor:pointer; font-size:13px;">🗑️</span>
+          </div>
+          <textarea id="notes-textarea" placeholder="Mulai menulis..." style="flex:1; width:100%; border:none; outline:none; resize:none; background:transparent; color:var(--text-primary); font-size:14px; padding:16px; font-family:inherit;">${escapeHtml(activeNode.content || "")}</textarea>
+        ` : `
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:13px;">Pilih atau buat catatan baru</div>
+        `}
+      </div>
+    </div>
+  `;
 
-/* ============ NOTES ============ */
-function openNotes(){
-  const w = createWindow("notes", {
-    title:"Notes", w:460, h:420, supportsTabs:true, content:""
+  body.querySelector("#notes-new-btn").addEventListener("click", () => {
+    let n = 1, name = "Catatan baru.txt";
+    while(vfsGetNode(NOTES_FOLDER + "/" + name)){ n++; name = `Catatan baru ${n}.txt`; }
+    vfsCreateFile(NOTES_FOLDER + "/" + name, "");
+    state.path = NOTES_FOLDER + "/" + name;
+    renderNotesBody(body, w, state);
   });
-  w.tabs[0].title = "Untitled";
-  w.tabs[0].render = (body) => {
-    body.innerHTML = `<textarea placeholder="Mulai menulis..." style="width:100%; height:100%; border:none; outline:none; resize:none; background:transparent; color:var(--text-primary); font-size:14px; padding:18px; font-family:inherit;"></textarea>`;
-  };
-  renderActiveTabContent(w);
+
+  body.querySelectorAll(".notes-item").forEach(el => {
+    el.addEventListener("click", () => {
+      state.path = NOTES_FOLDER + "/" + el.dataset.name;
+      renderNotesBody(body, w, state);
+    });
+  });
+
+  const delBtn = body.querySelector("#notes-delete-btn");
+  if(delBtn){
+    delBtn.addEventListener("click", () => {
+      if(confirm(`Hapus "${activeName}"?`)){
+        vfsDelete(state.path);
+        state.path = null;
+        renderNotesBody(body, w, state);
+      }
+    });
+  }
+
+  const textarea = body.querySelector("#notes-textarea");
+  const statusEl = body.querySelector("#notes-save-status");
+  if(textarea){
+    let saveTimer = null;
+    textarea.addEventListener("input", () => {
+      if(statusEl) statusEl.textContent = "Menyimpan...";
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        vfsWriteFile(state.path, textarea.value);
+        if(statusEl) statusEl.textContent = "Tersimpan";
+        // update tanggal di sidebar tanpa full re-render supaya fokus textarea tidak hilang
+        const item = body.querySelector(`.notes-item[data-name="${CSS.escape(activeName)}"] div:last-child`);
+        if(item) item.textContent = new Date().toLocaleDateString("id-ID");
+      }, 500);
+    });
+    textarea.focus();
+  }
 }
 
 /* ============ TERMINAL ============ */
@@ -2046,6 +2388,166 @@ const TERM_COMMANDS = {
 
 function findWindowByAppId(appId){
   return Object.values(OS.windows).find(w => !w.closed && w.appId === appId);
+}
+
+/* ============================================================
+   PHOTO VIEWER
+   ============================================================ */
+function openPhotoViewer(path){
+  const node = vfsGetNode(path);
+  const w = createWindow("photos", {
+    title:"Photos", w:560, h:440, supportsTabs:false, content:""
+  });
+  w.tabs[0].render = (body) => {
+    if(!node || node.type !== "file"){
+      body.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--text-secondary);">File gambar tidak ditemukan.</div>`;
+      return;
+    }
+    const src = node.content && node.content.startsWith("data:") ? node.content : null;
+    body.innerHTML = `
+      <div style="display:flex; flex-direction:column; height:100%; background:#0b0d10;">
+        <div style="flex:1; display:flex; align-items:center; justify-content:center; overflow:auto; padding:12px;">
+          ${src ? `<img src="${src}" style="max-width:100%; max-height:100%; border-radius:8px;">` : `
+            <div style="text-align:center; color:var(--text-secondary);">
+              <div style="font-size:52px; margin-bottom:10px;">🖼️</div>
+              <div style="font-size:13px;">Tidak ada data gambar untuk "${escapeHtml(vfsPathParts(path).pop())}"</div>
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+  };
+  renderActiveTabContent(w);
+}
+
+/* ============================================================
+   CALCULATOR
+   ============================================================ */
+function openCalculator(){
+  if(findWindowByAppId("calculator")){ focusWindow(findWindowByAppId("calculator").id); return; }
+  const w = createWindow("calculator", {
+    title:"Calculator", w:300, h:440, supportsTabs:false, content:""
+  });
+  const state = { display:"0", prev:null, op:null, resetNext:false };
+
+  function fmt(n){
+    if(!isFinite(n)) return "Error";
+    const s = String(Math.round(n * 1e10) / 1e10);
+    return s.length > 14 ? Number(n).toExponential(6) : s;
+  }
+  function calc(a,b,op){
+    switch(op){
+      case "+": return a+b;
+      case "-": return a-b;
+      case "×": return a*b;
+      case "÷": return b===0 ? NaN : a/b;
+      default: return b;
+    }
+  }
+
+  const btnRows = [
+    ["C","±","%","÷"],
+    ["7","8","9","×"],
+    ["4","5","6","-"],
+    ["1","2","3","+"],
+    ["0",".","="],
+  ];
+
+  w.tabs[0].render = (body) => {
+    body.innerHTML = `
+      <div style="display:flex; flex-direction:column; height:100%; background:#0b0d10; padding:14px; gap:12px;">
+        <div id="calc-display" style="text-align:right; font-size:38px; font-weight:300; color:#fff; padding:14px 10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${state.display}</div>
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; flex:1;">
+          ${btnRows.flat().map(b => {
+            const isOp = ["÷","×","-","+","="].includes(b);
+            const isTop = ["C","±","%"].includes(b);
+            const span = b==="0" ? "grid-column:span 2;" : "";
+            return `<button class="calc-btn" data-key="${b}" style="${span} border:none; border-radius:12px; font-size:17px; cursor:pointer; background:${isOp?"var(--accent)":isTop?"rgba(255,255,255,0.15)":"rgba(255,255,255,0.08)"}; color:${isOp?"#0b0d10":"#fff"}; font-weight:${isOp?"700":"500"};">${b}</button>`;
+          }).join("")}
+        </div>
+      </div>
+    `;
+    const display = body.querySelector("#calc-display");
+    body.querySelectorAll(".calc-btn").forEach(btn => {
+      btn.addEventListener("click", () => handleKey(btn.dataset.key));
+    });
+    function handleKey(key){
+      if(key >= "0" && key <= "9"){
+        state.display = (state.display === "0" || state.resetNext) ? key : state.display + key;
+        state.resetNext = false;
+      } else if(key === "."){
+        if(state.resetNext){ state.display = "0."; state.resetNext = false; }
+        else if(!state.display.includes(".")) state.display += ".";
+      } else if(key === "C"){
+        state.display = "0"; state.prev = null; state.op = null; state.resetNext = false;
+      } else if(key === "±"){
+        state.display = fmt(parseFloat(state.display) * -1);
+      } else if(key === "%"){
+        state.display = fmt(parseFloat(state.display) / 100);
+      } else if(["+","-","×","÷"].includes(key)){
+        if(state.prev !== null && state.op && !state.resetNext){
+          state.display = fmt(calc(state.prev, parseFloat(state.display), state.op));
+        }
+        state.prev = parseFloat(state.display);
+        state.op = key;
+        state.resetNext = true;
+      } else if(key === "="){
+        if(state.prev !== null && state.op){
+          state.display = fmt(calc(state.prev, parseFloat(state.display), state.op));
+          state.prev = null; state.op = null; state.resetNext = true;
+        }
+      }
+      display.textContent = state.display;
+    }
+  };
+  renderActiveTabContent(w);
+}
+
+/* ============================================================
+   TASK MANAGER
+   ============================================================ */
+function openTaskManager(){
+  if(findWindowByAppId("taskmanager")){ focusWindow(findWindowByAppId("taskmanager").id); return; }
+  const w = createWindow("taskmanager", {
+    title:"Task Manager", w:440, h:420, supportsTabs:false, content:""
+  });
+  w.tabs[0].render = (body) => renderTaskManagerBody(body, w);
+  renderActiveTabContent(w);
+  // refresh berkala biar daftar window tetap up-to-date selama Task Manager terbuka
+  const interval = setInterval(() => {
+    if(w.closed){ clearInterval(interval); return; }
+    renderTaskManagerBody(w.el.querySelector(".win-body"), w);
+  }, 1500);
+}
+
+function renderTaskManagerBody(body, w){
+  const running = Object.values(OS.windows).filter(x => !x.closed && x.appId !== "taskmanager");
+  body.innerHTML = `
+    <div style="display:flex; flex-direction:column; height:100%;">
+      <div style="padding:10px 14px; font-size:12px; font-weight:600; border-bottom:1px solid var(--taskbar-border); display:flex; justify-content:space-between;">
+        <span>Aplikasi</span><span>Status</span>
+      </div>
+      <div style="flex:1; overflow:auto;">
+        ${running.length === 0 ? `<div style="padding:20px; text-align:center; color:var(--text-secondary); font-size:12.5px;">Tidak ada aplikasi berjalan.</div>` : running.map(x => {
+          const app = OS.apps.find(a => a.id === x.appId);
+          return `
+          <div style="display:flex; align-items:center; gap:10px; padding:9px 14px; border-bottom:1px solid var(--taskbar-border);">
+            <span style="font-size:18px;">${app ? renderAppIcon(app.icon,18) : "🗔"}</span>
+            <span style="flex:1; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(x.title)}</span>
+            <span style="font-size:11px; color:var(--text-secondary); width:70px;">${x.minimized ? "Minimized" : "Berjalan"}</span>
+            <button data-win-id="${x.id}" class="tm-end-btn" style="border:none; background:#e5484d; color:#fff; font-size:11px; padding:5px 10px; border-radius:6px; cursor:pointer;">Akhiri</button>
+          </div>`;
+        }).join("")}
+      </div>
+      <div style="padding:8px 14px; font-size:10.5px; color:var(--text-secondary); border-top:1px solid var(--taskbar-border);">${running.length} proses berjalan</div>
+    </div>
+  `;
+  body.querySelectorAll(".tm-end-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      closeWindow(btn.dataset.winId);
+      renderTaskManagerBody(body, w);
+    });
+  });
 }
 
 function handleTerminalCmd(cmd, ctx){
