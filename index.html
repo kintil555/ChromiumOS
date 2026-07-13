@@ -882,6 +882,11 @@ function renderStartMenu(){
       openApp(el.dataset.appId);
       closeStartMenu();
     });
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const app = OS.apps.find(a => a.id === el.dataset.appId);
+      if(app) showAppIconContextMenu(e, app);
+    });
   });
   sm.querySelector("#sm-power-btn").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1960,15 +1965,15 @@ function renderFilesBody(body, w, state){
       e.preventDefault(); e.stopPropagation();
       const isFolder = el.dataset.type === "folder";
       openCustomMenu(e.clientX, e.clientY, [
-        ...(isFolder ? [{ label:"Buka", icon:"📂", onClick:() => goto(itemPath) }] : [{ label:"Buka", icon:"📂", onClick:() => openFileInAppropriateApp(itemPath) }]),
-        { label:"Ganti nama", icon:"✏️", onClick:() => {
+        ...(isFolder ? [{ label:"Buka", icon:"📂", action:() => goto(itemPath) }] : [{ label:"Buka", icon:"📂", action:() => openFileInAppropriateApp(itemPath) }]),
+        { label:"Ganti nama", icon:"✏️", action:() => {
           const newName = prompt("Nama baru:", name);
           if(newName && newName !== name){
             if(vfsRename(itemPath, newName)) renderFilesBody(body, w, state);
             else toast("Gagal", "Nama sudah dipakai.", "⚠️");
           }
         }},
-        { label:"Hapus", icon:"🗑️", onClick:() => {
+        { label:"Hapus", icon:"🗑️", action:() => {
           if(confirm(`Hapus "${name}"?`)){ vfsDelete(itemPath); renderFilesBody(body, w, state); }
         }},
       ]);
@@ -2604,9 +2609,12 @@ function renderBrowStore(body){
           <div style="font-size:11.5px; color:var(--text-secondary); margin-top:8px; line-height:1.6;">${app.description}</div>
           <div style="font-size:10.5px; color:var(--text-secondary); margin-top:6px; opacity:0.75;">Versi ${app.version}</div>
         </div>
-        <button class="bs-install-btn" data-app="${app.id}" style="flex-shrink:0; padding:9px 16px; border-radius:999px; border:none; cursor:pointer; font-size:12px; font-weight:600; ${installed ? 'background:rgba(128,128,128,0.2); color:var(--text-primary);' : 'background:var(--accent); color:#08202b;'}">
-          ${btnLabel}
-        </button>
+        <div style="flex-shrink:0; display:flex; flex-direction:column; gap:6px; align-items:stretch;">
+          <button class="bs-install-btn" data-app="${app.id}" style="padding:9px 16px; border-radius:999px; border:none; cursor:pointer; font-size:12px; font-weight:600; ${installed ? 'background:rgba(128,128,128,0.2); color:var(--text-primary);' : 'background:var(--accent); color:#08202b;'}">
+            ${btnLabel}
+          </button>
+          ${installed ? `<button class="bs-uninstall-btn" data-app="${app.id}" style="padding:6px 16px; border-radius:999px; border:1px solid rgba(229,72,77,0.4); background:transparent; color:#e5484d; cursor:pointer; font-size:11px; font-weight:600;">Uninstall</button>` : ""}
+        </div>
       </div>
     `;
   }).join("");
@@ -2625,6 +2633,17 @@ function renderBrowStore(body){
       }
       installBrowStoreApp(appId);
       renderBrowStore(body);
+    });
+  });
+  list.querySelectorAll(".bs-uninstall-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const appId = btn.dataset.app;
+      const catalogApp = BROWSTORE_CATALOG.find(a => a.id === appId);
+      if(confirm(`Uninstall "${catalogApp ? catalogApp.name : appId}"?`)){
+        uninstallApp(appId);
+        renderBrowStore(body);
+      }
     });
   });
 }
@@ -2690,6 +2709,39 @@ function installBrowStoreApp(appId){
   renderStartMenu();
   const toastIcon = isImageIcon(catalogApp.icon) ? "📦" : catalogApp.icon;
   toast("Aplikasi terinstal", catalogApp.name + " berhasil diinstal.", toastIcon);
+}
+
+// Hanya aplikasi yang terdaftar di BROWSTORE_CATALOG dan sudah terinstal (installedApps[id]===true)
+// yang boleh di-uninstall. Aplikasi bawaan sistem (Files, Notes, Settings, dst) tidak pernah bisa dihapus.
+function isUninstallable(appId){
+  return !!OS.settings.installedApps[appId] && !!BROWSTORE_CATALOG.find(a => a.id === appId);
+}
+
+function uninstallApp(appId){
+  if(!isUninstallable(appId)) return;
+  const app = OS.apps.find(a => a.id === appId);
+  const appName = app ? app.name : appId;
+
+  // tutup semua window aplikasi ini yang sedang berjalan
+  Object.values(OS.windows).filter(w => w.appId === appId && !w.closed).forEach(w => closeWindow(w.id));
+
+  delete OS.settings.installedApps[appId];
+  delete OS.settings.hiddenApps[appId];
+  OS.apps = OS.apps.filter(a => a.id !== appId);
+  saveSettings();
+
+  renderDesktopIcons();
+  renderTaskbarApps();
+  renderStartMenu();
+  toast("Aplikasi dihapus", `${appName} telah di-uninstall.`, "🗑️", 3200);
+}
+
+function confirmUninstallApp(appId){
+  const app = OS.apps.find(a => a.id === appId);
+  const appName = app ? app.name : appId;
+  if(confirm(`Uninstall "${appName}"? Aplikasi ini akan dihapus dari sistem.`)){
+    uninstallApp(appId);
+  }
 }
 
 /* ============================================================
@@ -3131,6 +3183,10 @@ function showAppIconContextMenu(e, app){
       toast(isHidden ? "Ditampilkan" : "Disembunyikan", `${app.name} ${isHidden ? "ditampilkan kembali" : "disembunyikan"} di desktop.`, "🗂️", 2500);
     }},
     { sep:true },
+    ...(isUninstallable(app.id) ? [
+      { label:"Uninstall", icon:"🗑️", action: () => confirmUninstallApp(app.id) },
+      { sep:true },
+    ] : []),
     { label:"Properties", icon:"ℹ️", disabled:true },
   ];
   openCustomMenu(e.clientX, e.clientY, items);
