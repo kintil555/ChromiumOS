@@ -392,8 +392,20 @@
    ============================================================ */
 
 const OS = {
-  version: "Build 24H2.1103",
-  nextBuild: "Build 25H1.0042",
+  version: "Build 25H1.0042",
+  nextBuild: "Build 25H2.0117",
+  // Riwayat build resmi Chromium OS — dipakai oleh PyPatcher untuk downgrade/upgrade/loncat versi.
+  // "features" adalah snapshot kemampuan sistem pada build tsb (dipakai PyPatcher, bukan file terpisah).
+  buildHistory: [
+    { id:"initial", label:"Build Awal (Initial Release)", version:"Build 22H1.0001",
+      features:{ draggableSearch:false, roundedUI:false, hideableDesktopApps:false, browStore:false, customWallpaper:false, desktopWidgets:false } },
+    { id:"24h2", label:"Build 24H2.1103", version:"Build 24H2.1103",
+      features:{ draggableSearch:true, roundedUI:true, hideableDesktopApps:true, browStore:false, customWallpaper:false, desktopWidgets:false } },
+    { id:"25h1", label:"Build 25H1.0042 (saat ini)", version:"Build 25H1.0042",
+      features:{ draggableSearch:true, roundedUI:true, hideableDesktopApps:true, browStore:true, customWallpaper:true, desktopWidgets:true } },
+    { id:"25h2", label:"Build 25H2.0117 (preview)", version:"Build 25H2.0117",
+      features:{ draggableSearch:true, roundedUI:true, hideableDesktopApps:true, browStore:true, customWallpaper:true, desktopWidgets:true } },
+  ],
   zTop: 100,
   windows: {},     // id -> window state
   winCount: 0,
@@ -401,13 +413,16 @@ const OS = {
     theme: "dark",
     accent: "#4cc2ff",
     wallpaper: "default",
+    customWallpapers: [], // { id, url }
     transparency: 1,
     contrast: "normal",
     nightlight: false,
     scale: 100,
     showSearchBar: true,
     hiddenApps: {},
-    searchPos: null // {top,left} custom
+    searchPos: null, // {top,left} custom
+    desktopWidgets: [], // { id, type: 'clock-digital'|'clock-analog'|'weather', x, y }
+    installedApps: {} // appId -> true, apps installed via BrowStore
   },
   apps: [
     { id:"browser", name:"Chromium Browser", icon:"🌐", pinned:true },
@@ -415,9 +430,35 @@ const OS = {
     { id:"settings", name:"Settings", icon:"⚙️", pinned:true },
     { id:"notes", name:"Notes", icon:"📝", pinned:true },
     { id:"terminal", name:"Terminal", icon:"⌥", pinned:false },
+    { id:"browstore", name:"BrowStore", icon:"🛍️", pinned:true },
     { id:"about", name:"About This OS", icon:"ℹ️", pinned:false },
   ]
 };
+
+// Katalog aplikasi resmi yang bisa diinstal lewat BrowStore
+const BROWSTORE_CATALOG = [
+  {
+    id:"pypatcher", name:"PyPatcher", icon:"🛠️",
+    tagline:"Alat resmi untuk patch & kelola versi build sistem.",
+    description:"PyPatcher memungkinkan Anda memeriksa riwayat build, serta berpindah (upgrade/downgrade) ke versi build Chromium OS tertentu. Fitur patching penuh masih dalam pengembangan.",
+    version:"0.1.0 (Preview)"
+  },
+  {
+    id:"widgets", name:"Widget", icon:"🧩",
+    tagline:"Tambahkan widget ke desktop: jam & cuaca.",
+    description:"Aplikasi Widget menambahkan panel mengambang di desktop seperti jam digital, jam analog minimalis, dan panel cuaca — di luar search bar bawaan.",
+    version:"1.0.0"
+  }
+];
+
+function restoreInstalledApps(){
+  Object.keys(OS.settings.installedApps || {}).forEach(appId => {
+    if(OS.settings.installedApps[appId] && !OS.apps.find(a => a.id === appId)){
+      const catalogApp = BROWSTORE_CATALOG.find(a => a.id === appId);
+      if(catalogApp) OS.apps.push({ id: catalogApp.id, name: catalogApp.name, icon: catalogApp.icon, pinned:false });
+    }
+  });
+}
 
 /* ---------- persistence (in-memory only, per spec no localStorage in artifacts sometimes ok in plain HTML, but we keep it in-memory to be safe) ---------- */
 function loadSettings(){
@@ -450,6 +491,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
 function initOS(){
   applySettingsToDOM();
+  restoreInstalledApps();
   renderDesktopIcons();
   renderTaskbarApps();
   renderStartMenu();
@@ -457,6 +499,7 @@ function initOS(){
   initDesktopSearch();
   initContextMenu();
   initGlobalClicks();
+  renderDesktopWidgets();
   toast("Selamat datang", `Chromium OS ${OS.version} siap digunakan.`, "👋");
 }
 
@@ -483,8 +526,19 @@ function applySettingsToDOM(){
   root.style.setProperty("--transparency", OS.settings.transparency);
 
   // wallpaper
-  const wp = WALLPAPERS[OS.settings.wallpaper] || WALLPAPERS.default;
-  desktop.style.background = wp;
+  if(OS.settings.wallpaper && OS.settings.wallpaper.startsWith("custom:")){
+    const id = OS.settings.wallpaper.slice(7);
+    const cw = OS.settings.customWallpapers.find(c => c.id === id);
+    if(cw){
+      desktop.style.background = `#111 url('${cw.url}') center/cover no-repeat`;
+    } else {
+      OS.settings.wallpaper = "default";
+      desktop.style.background = WALLPAPERS.default;
+    }
+  } else {
+    const wp = WALLPAPERS[OS.settings.wallpaper] || WALLPAPERS.default;
+    desktop.style.background = wp;
+  }
 
   // contrast
   if(OS.settings.contrast === "high"){
@@ -974,6 +1028,9 @@ function openApp(appId, opts={}){
   if(appId === "files") return openFiles();
   if(appId === "notes") return openNotes();
   if(appId === "terminal") return openTerminal();
+  if(appId === "browstore") return openBrowStore();
+  if(appId === "pypatcher") return openPyPatcher();
+  if(appId === "widgets") return openWidgetsApp();
   if(appId === "about") return openAbout();
 }
 
@@ -1106,8 +1163,8 @@ function renderBrowserContent(contentEl, current, state){
     <div class="iframe-fallback" style="display:none; position:absolute; inset:0; background:#fff; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; padding:30px;">
       <div style="font-size:34px;">🚧</div>
       <div style="font-size:15px; font-weight:600; color:#1b1c1f;">Situs ini tidak mengizinkan tampilan tersemat</div>
-      <div style="font-size:12.5px; color:#62666f; max-width:340px;">Beberapa situs memblokir tampilan iframe demi keamanan. Buka langsung di tab browser baru sebagai gantinya.</div>
-      <a href="${url}" target="_blank" rel="noopener noreferrer" style="padding:9px 18px; border-radius:999px; background:var(--accent); color:#08202b; font-size:12.5px; font-weight:600; text-decoration:none;">Buka di tab baru ↗</a>
+      <div style="font-size:12.5px; color:#62666f; max-width:340px;">Beberapa situs memblokir tampilan iframe demi keamanan (X-Frame-Options/CSP). Situs tetap ditampilkan di jendela browser ini, namun kontennya tidak dapat dirender langsung.</div>
+      <div style="font-size:11px; color:#9a9fa8;">${escapeHtml(url)}</div>
     </div>
   `;
   const iframe = contentEl.querySelector("iframe");
@@ -1338,12 +1395,22 @@ function renderPreferenceSettings(content){
     `)}
 
     ${settingsRow("Wallpaper", "Pilih latar belakang desktop.", "")}
-    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:-6px 0 16px;" id="wallpaper-grid">
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:-6px 0 12px;" id="wallpaper-grid">
       ${Object.entries(WALLPAPERS).map(([key,grad]) => `
         <div class="wallpaper-option" data-wp="${key}" style="height:60px; border-radius:10px; background:${grad}; cursor:pointer; border:2px solid ${OS.settings.wallpaper===key ? 'var(--accent)' : 'transparent'}; position:relative;">
           <div style="position:absolute; bottom:4px; left:6px; font-size:10px; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6); text-transform:capitalize;">${key}</div>
         </div>
       `).join("")}
+      ${OS.settings.customWallpapers.map(cw => `
+        <div class="wallpaper-option custom-wp" data-wp="custom:${cw.id}" style="height:60px; border-radius:10px; background:url('${escapeHtml(cw.url)}') center/cover; cursor:pointer; border:2px solid ${OS.settings.wallpaper===('custom:'+cw.id) ? 'var(--accent)' : 'transparent'}; position:relative;">
+          <div style="position:absolute; bottom:4px; left:6px; font-size:10px; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.6);">Custom</div>
+          <div class="wp-remove" data-remove="${cw.id}" title="Hapus" style="position:absolute; top:4px; right:4px; width:18px; height:18px; border-radius:50%; background:rgba(0,0,0,0.55); color:#fff; font-size:11px; display:flex; align-items:center; justify-content:center; cursor:pointer;">✕</div>
+        </div>
+      `).join("")}
+    </div>
+    <div style="display:flex; gap:8px; margin:0 0 16px;">
+      <input id="custom-wp-url" type="text" placeholder="Tempel URL gambar (https://...)" style="flex:1; padding:9px 12px; border-radius:8px; border:1px solid var(--taskbar-border); background:transparent; color:var(--text-primary); font-size:12px; outline:none;">
+      <button id="btn-add-wp" style="padding:9px 16px; border-radius:8px; border:none; background:var(--accent); color:#08202b; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">+ Tambah</button>
     </div>
 
     ${settingsRow("Transparansi jendela (" + Math.round(OS.settings.transparency*100) + "%)", "Atur tingkat transparansi kaca (mica) pada jendela dan taskbar.",
@@ -1366,12 +1433,34 @@ function renderPreferenceSettings(content){
     });
   });
   content.querySelectorAll(".wallpaper-option").forEach(wp => {
-    wp.addEventListener("click", () => {
+    wp.addEventListener("click", (e) => {
+      if(e.target.closest(".wp-remove")) return;
       OS.settings.wallpaper = wp.dataset.wp;
       applySettingsToDOM(); saveSettings();
       renderPreferenceSettings(content);
       toast("Wallpaper diperbarui", "Latar belakang desktop telah diganti.", "🖼️");
     });
+  });
+  content.querySelectorAll(".wp-remove").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.remove;
+      OS.settings.customWallpapers = OS.settings.customWallpapers.filter(cw => cw.id !== id);
+      if(OS.settings.wallpaper === "custom:" + id) OS.settings.wallpaper = "default";
+      applySettingsToDOM(); saveSettings();
+      renderPreferenceSettings(content);
+    });
+  });
+  content.querySelector("#btn-add-wp").addEventListener("click", () => {
+    const input = content.querySelector("#custom-wp-url");
+    const url = input.value.trim();
+    if(!url){ toast("URL kosong", "Masukkan URL gambar terlebih dahulu.", "⚠️"); return; }
+    const id = "cw_" + Date.now().toString(36);
+    OS.settings.customWallpapers.push({ id, url });
+    OS.settings.wallpaper = "custom:" + id;
+    applySettingsToDOM(); saveSettings();
+    renderPreferenceSettings(content);
+    toast("Wallpaper ditambahkan", "Wallpaper custom berhasil dipasang.", "🖼️");
   });
   content.querySelector("#rng-transparency").addEventListener("input", (e) => {
     OS.settings.transparency = parseInt(e.target.value) / 100;
@@ -1413,15 +1502,16 @@ function renderUpdateSettings(content){
         <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--taskbar-border);">
           <div style="font-size:11.5px; font-weight:600; margin-bottom:6px; color:var(--text-secondary);">Yang baru di ${OS.nextBuild}:</div>
           <ul style="margin:0; padding-left:18px; font-size:11.5px; color:var(--text-secondary); line-height:1.9;">
-            <li>Search bar desktop kini bisa digeser bebas ke posisi mana pun</li>
-            <li>Peningkatan performa dan responsivitas sistem</li>
-            <li>Tampilan UI rounded baru terinspirasi Windows 11</li>
-            <li>Aplikasi di desktop kini bisa disembunyikan dari Pengaturan</li>
+            <li>Perbaikan: pencarian tidak lagi menutup Start Menu secara tidak sengaja</li>
+            <li>Pencarian situs kini selalu terbuka di dalam jendela Browser OS, bukan tab asli</li>
+            <li>Wallpaper custom via URL gambar</li>
+            <li>BrowStore — instal aplikasi resmi: PyPatcher & Widget</li>
+            <li>Widget desktop: jam digital, jam analog minimalis, panel cuaca</li>
           </ul>
         </div>
       ` : `
         <div style="margin-top:18px; padding:14px 16px; border-radius:12px; background:rgba(128,128,128,0.12); font-size:11.5px; color:var(--text-secondary); line-height:1.6;">
-          🎉 Anda telah memperbarui ke build terbaru. Fitur baru sudah aktif: search bar dapat digeser, performa meningkat, tampilan UI rounded, dan aplikasi desktop dapat disembunyikan lewat menu klik kanan atau Preferences.
+          🎉 Anda telah memperbarui ke build terbaru. Fitur baru sudah aktif: Start Menu tidak lagi tertutup saat mencari, browser terintegrasi penuh, wallpaper custom, dan BrowStore untuk instalasi aplikasi.
         </div>
       `}
     </div>
@@ -1811,6 +1901,315 @@ function handleTerminalCmd(cmd, ctx){
 }
 
 /* ============ ABOUT ============ */
+/* ============================================================
+   BROWSTORE — app store resmi
+   ============================================================ */
+function openBrowStore(){
+  const existing = Object.values(OS.windows).find(w => w.appId === "browstore" && !w.closed);
+  if(existing){
+    if(existing.minimized) restoreWindow(existing.id); else focusWindow(existing.id);
+    return;
+  }
+  const w = createWindow("browstore", {
+    title:"BrowStore", w:680, h:480, supportsTabs:false, content:""
+  });
+  w.tabs[0].render = (body) => renderBrowStore(body);
+  renderActiveTabContent(w);
+}
+
+function renderBrowStore(body){
+  body.innerHTML = `
+    <div style="display:flex; flex-direction:column; height:100%;">
+      <div style="padding:20px 26px 14px; border-bottom:1px solid var(--taskbar-border); flex-shrink:0;">
+        <div style="font-size:19px; font-weight:700; display:flex; align-items:center; gap:8px;">🛍️ BrowStore</div>
+        <div style="font-size:12px; color:var(--text-secondary); margin-top:4px;">Instal aplikasi resmi Chromium OS.</div>
+      </div>
+      <div id="browstore-list" style="flex:1; overflow:auto; padding:18px 26px;"></div>
+    </div>
+  `;
+  const list = body.querySelector("#browstore-list");
+  list.innerHTML = BROWSTORE_CATALOG.map(app => {
+    const installed = !!OS.settings.installedApps[app.id];
+    return `
+      <div style="display:flex; gap:16px; align-items:flex-start; padding:16px 0; border-bottom:1px solid var(--taskbar-border);">
+        <div style="font-size:34px; flex-shrink:0;">${app.icon}</div>
+        <div style="flex:1;">
+          <div style="font-size:14.5px; font-weight:600;">${app.name}</div>
+          <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;">${app.tagline}</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); margin-top:8px; line-height:1.6;">${app.description}</div>
+          <div style="font-size:10.5px; color:var(--text-secondary); margin-top:6px; opacity:0.75;">Versi ${app.version}</div>
+        </div>
+        <button class="bs-install-btn" data-app="${app.id}" style="flex-shrink:0; padding:9px 16px; border-radius:999px; border:none; cursor:pointer; font-size:12px; font-weight:600; ${installed ? 'background:rgba(128,128,128,0.2); color:var(--text-primary);' : 'background:var(--accent); color:#08202b;'}">
+          ${installed ? '✓ Terinstal' : 'Instal'}
+        </button>
+      </div>
+    `;
+  }).join("");
+
+  list.querySelectorAll(".bs-install-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const appId = btn.dataset.app;
+      if(OS.settings.installedApps[appId]) {
+        openApp(appId);
+        return;
+      }
+      installBrowStoreApp(appId);
+      renderBrowStore(body);
+    });
+  });
+}
+
+function installBrowStoreApp(appId){
+  const catalogApp = BROWSTORE_CATALOG.find(a => a.id === appId);
+  if(!catalogApp) return;
+  OS.settings.installedApps[appId] = true;
+  saveSettings();
+  if(!OS.apps.find(a => a.id === appId)){
+    OS.apps.push({ id: catalogApp.id, name: catalogApp.name, icon: catalogApp.icon, pinned:false });
+  }
+  renderDesktopIcons();
+  renderStartMenu();
+  toast("Aplikasi terinstal", catalogApp.name + " berhasil diinstal.", catalogApp.icon);
+}
+
+/* ============================================================
+   PYPATCHER — alat patch/versi build (stub, belum berfungsi)
+   ============================================================ */
+function openPyPatcher(){
+  const existing = Object.values(OS.windows).find(w => w.appId === "pypatcher" && !w.closed);
+  if(existing){
+    if(existing.minimized) restoreWindow(existing.id); else focusWindow(existing.id);
+    return;
+  }
+  const w = createWindow("pypatcher", {
+    title:"PyPatcher", w:520, h:520, supportsTabs:false, content:""
+  });
+  w.tabs[0].render = (body) => {
+    body.innerHTML = `
+      <div style="padding:24px 28px; height:100%; overflow:auto;">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
+          <div style="font-size:26px;">🛠️</div>
+          <div>
+            <div style="font-size:16.5px; font-weight:700;">PyPatcher</div>
+            <div style="font-size:11px; color:var(--text-secondary);">Preview 0.1.0 — belum aktif sepenuhnya</div>
+          </div>
+        </div>
+
+        <div style="margin-top:16px; padding:12px 14px; border-radius:10px; background:rgba(250,204,21,0.12); border:1px solid rgba(250,204,21,0.35); font-size:12px; color:var(--text-primary); line-height:1.6;">
+          ⚠️ Fitur patch build (upgrade / downgrade / loncat versi) masih dalam pengembangan dan belum bisa digunakan. Antarmuka di bawah ini hanya pratinjau riwayat build.
+        </div>
+
+        <div style="margin-top:20px; font-size:12.5px; font-weight:600; color:var(--text-secondary);">Riwayat Build Sistem</div>
+        <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+          ${OS.buildHistory.map(b => `
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-radius:10px; border:1px solid var(--taskbar-border); ${b.version === OS.version ? 'background:rgba(76,194,255,0.1); border-color:var(--accent);' : ''}">
+              <div>
+                <div style="font-size:12.5px; font-weight:600;">${b.label}</div>
+                <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">${b.version}</div>
+              </div>
+              <button disabled title="Belum tersedia" style="padding:7px 14px; border-radius:999px; border:none; font-size:11.5px; font-weight:600; background:rgba(128,128,128,0.2); color:var(--text-secondary); cursor:not-allowed;">
+                ${b.version === OS.version ? 'Aktif' : 'Patch ke sini'}
+              </button>
+            </div>
+          `).join("")}
+        </div>
+
+        <div style="margin-top:20px; font-size:11px; color:var(--text-secondary); line-height:1.6;">
+          Ke depannya, PyPatcher akan memungkinkan Anda berpindah bebas antar build — termasuk kembali ke build awal atau meloncat ke build terbaru.
+        </div>
+      </div>
+    `;
+  };
+  renderActiveTabContent(w);
+}
+
+/* ============================================================
+   WIDGET APP — kelola widget desktop (jam, cuaca)
+   ============================================================ */
+const WIDGET_TYPES = {
+  "clock-digital": { name:"Jam Digital", icon:"⏱️" },
+  "clock-analog":  { name:"Jam Analog Minimalis", icon:"🕒" },
+  "weather":       { name:"Panel Cuaca", icon:"🌤️" },
+};
+
+function openWidgetsApp(){
+  const existing = Object.values(OS.windows).find(w => w.appId === "widgets" && !w.closed);
+  if(existing){
+    if(existing.minimized) restoreWindow(existing.id); else focusWindow(existing.id);
+    return;
+  }
+  const w = createWindow("widgets", {
+    title:"Widget", w:460, h:460, supportsTabs:false, content:""
+  });
+  w.tabs[0].render = (body) => renderWidgetsApp(body);
+  renderActiveTabContent(w);
+}
+
+function renderWidgetsApp(body){
+  body.innerHTML = `
+    <div style="padding:22px 26px; height:100%; overflow:auto;">
+      <div style="font-size:16.5px; font-weight:700; display:flex; align-items:center; gap:8px;">🧩 Widget</div>
+      <div style="font-size:12px; color:var(--text-secondary); margin-top:4px; margin-bottom:18px;">Tambahkan panel mengambang ke desktop, di luar search bar.</div>
+      <div style="display:flex; flex-direction:column; gap:10px;" id="widget-list"></div>
+    </div>
+  `;
+  const list = body.querySelector("#widget-list");
+  list.innerHTML = Object.entries(WIDGET_TYPES).map(([type, meta]) => {
+    const active = OS.settings.desktopWidgets.some(wd => wd.type === type);
+    return `
+      <div style="display:flex; align-items:center; gap:14px; padding:14px 16px; border:1px solid var(--taskbar-border); border-radius:12px;">
+        <div style="font-size:24px;">${meta.icon}</div>
+        <div style="flex:1;">
+          <div style="font-size:13px; font-weight:600;">${meta.name}</div>
+          <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">${active ? "Aktif di desktop" : "Belum ditambahkan"}</div>
+        </div>
+        <button class="widget-toggle-btn" data-type="${type}" style="padding:7px 14px; border-radius:999px; border:none; font-size:11.5px; font-weight:600; cursor:pointer; ${active ? 'background:rgba(128,128,128,0.2); color:var(--text-primary);' : 'background:var(--accent); color:#08202b;'}">
+          ${active ? 'Hapus' : 'Tambah'}
+        </button>
+      </div>
+    `;
+  }).join("");
+
+  list.querySelectorAll(".widget-toggle-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const type = btn.dataset.type;
+      const idx = OS.settings.desktopWidgets.findIndex(wd => wd.type === type);
+      if(idx > -1){
+        removeDesktopWidget(OS.settings.desktopWidgets[idx].id);
+      } else {
+        addDesktopWidget(type);
+      }
+      renderWidgetsApp(body);
+    });
+  });
+}
+
+function addDesktopWidget(type){
+  const id = "wgt_" + Date.now().toString(36);
+  const offset = OS.settings.desktopWidgets.length * 24;
+  OS.settings.desktopWidgets.push({ id, type, x: 40 + offset, y: 140 + offset });
+  saveSettings();
+  renderDesktopWidgets();
+  toast("Widget ditambahkan", (WIDGET_TYPES[type]?.name || type) + " kini tampil di desktop.", "🧩");
+}
+
+function removeDesktopWidget(id){
+  OS.settings.desktopWidgets = OS.settings.desktopWidgets.filter(wd => wd.id !== id);
+  saveSettings();
+  renderDesktopWidgets();
+}
+
+let _widgetClockInterval = null;
+function renderDesktopWidgets(){
+  let layer = document.getElementById("widget-layer");
+  if(!layer){
+    layer = document.createElement("div");
+    layer.id = "widget-layer";
+    layer.style.cssText = "position:absolute; inset:0; pointer-events:none; z-index:5;";
+    document.getElementById("desktop").insertBefore(layer, document.getElementById("desktop-search"));
+  }
+  layer.innerHTML = "";
+  OS.settings.desktopWidgets.forEach(wd => {
+    const el = document.createElement("div");
+    el.className = "desktop-widget";
+    el.dataset.id = wd.id;
+    el.style.cssText = `position:absolute; left:${wd.x}px; top:${wd.y}px; pointer-events:auto; cursor:grab;`;
+    el.innerHTML = renderWidgetInner(wd);
+    layer.appendChild(el);
+    makeWidgetDraggable(el, wd);
+  });
+  if(_widgetClockInterval) clearInterval(_widgetClockInterval);
+  _widgetClockInterval = setInterval(updateDesktopWidgetClocks, 1000);
+  updateDesktopWidgetClocks();
+}
+
+function widgetShell(inner, wd){
+  return `
+    <div style="background:rgba(20,24,30,0.55); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); border:1px solid rgba(255,255,255,0.14); border-radius:18px; padding:16px 20px; color:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.3); min-width:150px; text-align:center; position:relative;">
+      <div class="widget-close" data-id="${wd.id}" title="Hapus widget" style="position:absolute; top:6px; right:8px; font-size:11px; opacity:0.5; cursor:pointer;">✕</div>
+      ${inner}
+    </div>
+  `;
+}
+
+function renderWidgetInner(wd){
+  if(wd.type === "clock-digital"){
+    return widgetShell(`
+      <div class="wgt-digital-time" style="font-size:28px; font-weight:700; letter-spacing:1px;">--:--</div>
+      <div class="wgt-digital-date" style="font-size:11px; opacity:0.7; margin-top:4px;">-</div>
+    `, wd);
+  }
+  if(wd.type === "clock-analog"){
+    return widgetShell(`
+      <svg class="wgt-analog" width="96" height="96" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="47" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2"/>
+        ${[0,30,60,90,120,150,180,210,240,270,300,330].map(a => `<line x1="50" y1="6" x2="50" y2="${a%90===0?11:9}" stroke="rgba(255,255,255,0.5)" stroke-width="${a%90===0?2:1}" transform="rotate(${a} 50 50)"/>`).join("")}
+        <line class="wgt-hour" x1="50" y1="50" x2="50" y2="28" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+        <line class="wgt-minute" x1="50" y1="50" x2="50" y2="16" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+        <line class="wgt-second" x1="50" y1="50" x2="50" y2="12" stroke="var(--accent)" stroke-width="1" stroke-linecap="round"/>
+        <circle cx="50" cy="50" r="2.5" fill="#fff"/>
+      </svg>
+    `, wd);
+  }
+  if(wd.type === "weather"){
+    return widgetShell(`
+      <div style="font-size:30px;">⛅</div>
+      <div style="font-size:22px; font-weight:700; margin-top:2px;">24°C</div>
+      <div style="font-size:11px; opacity:0.75; margin-top:2px;">Berawan sebagian</div>
+      <div style="font-size:10px; opacity:0.6; margin-top:6px;">(data cuaca simulasi)</div>
+    `, wd);
+  }
+  return widgetShell("Widget tidak dikenal", wd);
+}
+
+function updateDesktopWidgetClocks(){
+  const now = new Date();
+  document.querySelectorAll(".wgt-digital-time").forEach(el => {
+    el.textContent = now.toLocaleTimeString("id-ID", {hour:"2-digit", minute:"2-digit"});
+  });
+  document.querySelectorAll(".wgt-digital-date").forEach(el => {
+    el.textContent = now.toLocaleDateString("id-ID", {weekday:"long", day:"2-digit", month:"long"});
+  });
+  const hourDeg = (now.getHours() % 12) * 30 + now.getMinutes() * 0.5;
+  const minDeg = now.getMinutes() * 6;
+  const secDeg = now.getSeconds() * 6;
+  document.querySelectorAll(".wgt-analog").forEach(svg => {
+    svg.querySelector(".wgt-hour").setAttribute("transform", `rotate(${hourDeg} 50 50)`);
+    svg.querySelector(".wgt-minute").setAttribute("transform", `rotate(${minDeg} 50 50)`);
+    svg.querySelector(".wgt-second").setAttribute("transform", `rotate(${secDeg} 50 50)`);
+  });
+}
+
+function makeWidgetDraggable(el, wd){
+  let dragging = false, offX = 0, offY = 0;
+  el.addEventListener("mousedown", (e) => {
+    if(e.target.closest(".widget-close")) return;
+    dragging = true;
+    el.style.cursor = "grabbing";
+    const rect = el.getBoundingClientRect();
+    offX = e.clientX - rect.left;
+    offY = e.clientY - rect.top;
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if(!dragging) return;
+    wd.x = e.clientX - offX;
+    wd.y = e.clientY - offY;
+    el.style.left = wd.x + "px";
+    el.style.top = wd.y + "px";
+  });
+  window.addEventListener("mouseup", () => {
+    if(!dragging) return;
+    dragging = false;
+    el.style.cursor = "grab";
+    saveSettings();
+  });
+  el.querySelector(".widget-close").addEventListener("click", (e) => {
+    e.stopPropagation();
+    removeDesktopWidget(wd.id);
+  });
+}
+
 function openAbout(){
   const w = createWindow("about", {
     title:"About This OS", w:420, h:380, supportsTabs:false, content:""
