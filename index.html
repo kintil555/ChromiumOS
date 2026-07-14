@@ -2717,6 +2717,17 @@ function isUninstallable(appId){
   return !!OS.settings.installedApps[appId] && !!BROWSTORE_CATALOG.find(a => a.id === appId);
 }
 
+// Cleanup khusus per-app yang dijalankan SEBELUM app dihapus dari OS.apps saat uninstall.
+// Tambahkan handler baru di sini kalau ada app lain yang punya efek/state di luar dirinya sendiri.
+const UNINSTALL_CLEANUP = {
+  widgets: () => {
+    // Widget yang sudah ditaruh di desktop adalah fitur milik app "Widget" — kalau
+    // app-nya dihapus, semua widget yang sedang tampil di desktop ikut hilang juga.
+    OS.settings.desktopWidgets = [];
+    renderDesktopWidgets();
+  },
+};
+
 function uninstallApp(appId){
   if(!isUninstallable(appId)) return;
   const app = OS.apps.find(a => a.id === appId);
@@ -2724,6 +2735,8 @@ function uninstallApp(appId){
 
   // tutup semua window aplikasi ini yang sedang berjalan
   Object.values(OS.windows).filter(w => w.appId === appId && !w.closed).forEach(w => closeWindow(w.id));
+
+  if(UNINSTALL_CLEANUP[appId]) UNINSTALL_CLEANUP[appId]();
 
   delete OS.settings.installedApps[appId];
   delete OS.settings.hiddenApps[appId];
