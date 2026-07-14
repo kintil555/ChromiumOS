@@ -146,34 +146,12 @@
   #desktop-search input::placeholder{ color:rgba(255,255,255,0.65); }
   #desktop-search.search-hidden{ display:none; }
 
-  /* ============ 4Task — toggle arrow + animasi taskbar (pop up, back-ease, stagger kiri->kanan) ============ */
-  @keyframes fourtask-arrow-in{
-    from{ opacity:0; transform:translateX(-50%) translateY(10px); }
-    to{ opacity:1; transform:translateX(-50%) translateY(0); }
+  /* ============ 4Task — taskbar auto-hide, muncul saat kursor mendekat, back-ease pop up + stagger kiri->kanan ============ */
+  #fourtask-hoverzone{
+    position:absolute; bottom:0; left:0; right:0;
+    height:28px;
+    z-index:9998;
   }
-  #fourtask-toggle{
-    position:absolute; bottom:60px; left:50%; transform:translateX(-50%);
-    z-index:1002;
-    width:52px; height:20px;
-    display:flex; align-items:center; justify-content:center;
-    background:var(--taskbar-bg);
-    backdrop-filter:blur(var(--glass-blur));
-    -webkit-backdrop-filter:blur(var(--glass-blur));
-    border:1px solid var(--taskbar-border);
-    border-radius:10px;
-    cursor:pointer;
-    box-shadow:0 4px 16px rgba(0,0,0,0.3);
-    transition:height 0.16s ease, background 0.15s ease, bottom 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-    animation:fourtask-arrow-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-  }
-  #fourtask-toggle:hover{ height:24px; background:rgba(128,128,128,0.28); }
-  #fourtask-toggle.taskbar-hidden{ bottom:16px; }
-  #fourtask-toggle svg{
-    width:14px; height:14px;
-    stroke:var(--text-primary);
-    transition:transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-  }
-  #fourtask-toggle.taskbar-hidden svg{ transform:rotate(180deg); }
   #taskbar.taskbar-hiding, #taskbar.taskbar-hidden{
     pointer-events:none;
   }
@@ -196,7 +174,7 @@
   /* ============ Taskbar (Windows 11 style, centered, floating) ============ */
   #taskbar{
     position:absolute; bottom:8px; left:50%; transform:translateX(-50%);
-    z-index:1000;
+    z-index:9999;
     display:flex; align-items:center; gap:4px;
     padding:6px 10px;
     border-radius:var(--radius-lg);
@@ -252,7 +230,7 @@
     border-radius:var(--radius-lg);
     box-shadow:0 20px 60px rgba(0,0,0,0.45);
     padding:28px;
-    z-index:1001;
+    z-index:10000;
     opacity:0; pointer-events:none;
     transition:opacity 0.16s ease, transform 0.16s ease;
   }
@@ -356,7 +334,7 @@
 
   /* ============ Context Menu ============ */
   #ctx-menu{
-    position:absolute; z-index:5000;
+    position:absolute; z-index:10001;
     min-width:220px;
     background:var(--window-bg);
     backdrop-filter:blur(var(--glass-blur));
@@ -379,7 +357,7 @@
   .ctx-item.disabled{ opacity:0.35; pointer-events:none; }
 
   /* ============ Notification / Toast ============ */
-  #toast-layer{ position:absolute; bottom:90px; right:20px; z-index:6000; display:flex; flex-direction:column-reverse; gap:10px; align-items:flex-end; }
+  #toast-layer{ position:absolute; bottom:90px; right:20px; z-index:10002; display:flex; flex-direction:column-reverse; gap:10px; align-items:flex-end; }
   .toast{
     min-width:280px; max-width:340px;
     background:var(--window-bg);
@@ -461,9 +439,7 @@
       </div>
     </div>
   </div>
-  <div id="fourtask-toggle" title="Tampilkan/sembunyikan taskbar (4Task)">
-    <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>
-  </div>
+  <div id="fourtask-hoverzone"></div>
 </div>
 
 <div id="ctx-menu"></div>
@@ -505,7 +481,7 @@ const OS = {
     iconPositions: {}, // appId -> {x,y}, posisi custom icon desktop (diatur lewat mode Edit Layout)
     desktopWidgets: [], // { id, type: 'clock-digital'|'clock-analog'|'weather', x, y }
     installedApps: {}, // appId -> true, apps installed via BrowStore
-    taskbarHidden: false, // 4Task: status taskbar saat ini (disembunyikan/ditampilkan)
+    taskbarAutoHide: true, // 4Task: taskbar auto-hide, muncul saat kursor mendekati dasar layar
     currentBuildId: "25h1", // id dari OS.buildHistory yang sedang aktif — diubah oleh PyPatcher/Update
     tweaks: {
       updateVersionSwitcherInjected: false // true jika PyPatcher sudah "inject" opsi pilih versi ke Settings > Update
@@ -3421,56 +3397,64 @@ function openAbout(){
 }
 
 /* ============================================================
-   4TASK — app kustomisasi taskbar: sembunyikan/tampilkan dgn animasi
-   pop-up (translateY + back-easing) & item taskbar muncul stagger
-   dari kiri ke kanan.
+   4TASK — taskbar auto-hide: sembunyi sendiri, muncul saat kursor
+   mendekati dasar layar (hover-reveal), dgn animasi pop-up
+   (translateY + back-easing) & item taskbar muncul stagger kiri->kanan.
    ============================================================ */
 let FOURTASK_ANIMATING = false;
+let FOURTASK_HIDE_TIMER = null;
+const FOURTASK_HIDE_DELAY = 550; // ms jeda sebelum taskbar sembunyi lagi setelah kursor menjauh
 
 function initFourTask(){
-  const arrow = document.getElementById("fourtask-toggle");
   const taskbar = document.getElementById("taskbar");
+  const hoverzone = document.getElementById("fourtask-hoverzone");
 
-  // state awal
-  if(OS.settings.taskbarHidden){
+  // state awal: kalau fitur auto-hide aktif, taskbar mulai dalam kondisi tersembunyi
+  if(OS.settings.taskbarAutoHide){
     taskbar.classList.add("taskbar-hidden");
-    arrow.classList.add("taskbar-hidden");
   }
 
-  arrow.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleTaskbarVisibility();
-  });
+  const cancelHideTimer = () => {
+    if(FOURTASK_HIDE_TIMER){ clearTimeout(FOURTASK_HIDE_TIMER); FOURTASK_HIDE_TIMER = null; }
+  };
+  const scheduleHide = () => {
+    if(!OS.settings.taskbarAutoHide) return;
+    cancelHideTimer();
+    FOURTASK_HIDE_TIMER = setTimeout(() => {
+      // jangan sembunyikan kalau kursor sedang di atas taskbar atau hoverzone
+      if(taskbar.matches(":hover") || hoverzone.matches(":hover")) return;
+      hideTaskbarAnimated(taskbar);
+    }, FOURTASK_HIDE_DELAY);
+  };
 
-  // auto-hide: klik di luar taskbar & panah -> sembunyikan taskbar otomatis
-  document.addEventListener("click", (e) => {
-    if(FOURTASK_ANIMATING) return;
-    if(taskbar.classList.contains("taskbar-hidden")) return;
-    if(e.target.closest("#taskbar") || e.target.closest("#fourtask-toggle")) return;
-    // jangan auto-hide kalau ada menu/window/start-menu yang lagi berinteraksi dan butuh taskbar tetap kelihatan
-    if(e.target.closest("#start-menu")) return;
-    hideTaskbarAnimated(document.getElementById("taskbar"), document.getElementById("fourtask-toggle"));
+  hoverzone.addEventListener("mouseenter", () => {
+    cancelHideTimer();
+    if(OS.settings.taskbarAutoHide) showTaskbarAnimated(taskbar);
+  });
+  taskbar.addEventListener("mouseenter", () => { cancelHideTimer(); });
+  taskbar.addEventListener("mouseleave", () => { scheduleHide(); });
+  hoverzone.addEventListener("mouseleave", (e) => {
+    // kalau kursor pindah langsung ke taskbar, jangan hitung sebagai "menjauh"
+    if(e.relatedTarget && (e.relatedTarget.closest && e.relatedTarget.closest("#taskbar"))) return;
+    scheduleHide();
   });
 }
 
-function toggleTaskbarVisibility(){
-  if(FOURTASK_ANIMATING) return;
-  const taskbar = document.getElementById("taskbar");
-  const arrow = document.getElementById("fourtask-toggle");
-
-  if(taskbar.classList.contains("taskbar-hidden")){
-    showTaskbarAnimated(taskbar, arrow);
-  } else {
-    hideTaskbarAnimated(taskbar, arrow);
-  }
-}
-
-function showTaskbarAnimated(taskbar, arrow){
-  FOURTASK_ANIMATING = true;
-  OS.settings.taskbarHidden = false;
+function setTaskbarAutoHide(enabled){
+  OS.settings.taskbarAutoHide = enabled;
   saveSettings();
+  const taskbar = document.getElementById("taskbar");
+  if(enabled){
+    hideTaskbarAnimated(taskbar);
+  } else {
+    showTaskbarAnimated(taskbar);
+  }
+}
 
-  arrow.classList.remove("taskbar-hidden");
+function showTaskbarAnimated(taskbar){
+  if(!taskbar.classList.contains("taskbar-hidden")){ FOURTASK_ANIMATING = false; return; }
+  FOURTASK_ANIMATING = true;
+
   taskbar.classList.remove("taskbar-hidden");
 
   // reflow supaya animasi pop-up ke-trigger dari awal
@@ -3500,9 +3484,10 @@ function showTaskbarAnimated(taskbar, arrow){
   setTimeout(() => { if(FOURTASK_ANIMATING) cleanup(); }, 900);
 }
 
-function hideTaskbarAnimated(taskbar, arrow){
+function hideTaskbarAnimated(taskbar){
+  if(taskbar.classList.contains("taskbar-hidden")) return;
+  if(!OS.settings.taskbarAutoHide) return;
   FOURTASK_ANIMATING = true;
-  arrow.classList.add("taskbar-hidden");
 
   taskbar.style.transition = "opacity 0.22s ease, transform 0.22s cubic-bezier(0.4,0,1,1)";
   taskbar.style.opacity = "0";
@@ -3513,8 +3498,6 @@ function hideTaskbarAnimated(taskbar, arrow){
     taskbar.style.transition = "";
     taskbar.style.opacity = "";
     taskbar.style.transform = "";
-    OS.settings.taskbarHidden = true;
-    saveSettings();
     FOURTASK_ANIMATING = false;
   }, 230);
 }
@@ -3533,35 +3516,35 @@ function openFourTask(){
 }
 
 function renderFourTaskApp(body){
-  const hidden = !!OS.settings.taskbarHidden;
+  const autoHide = !!OS.settings.taskbarAutoHide;
   body.innerHTML = `
     <div style="padding:24px 26px; height:100%; overflow:auto;">
       <div style="font-size:17px; font-weight:700; display:flex; align-items:center; gap:8px;">🎛️ 4Task</div>
       <div style="font-size:12px; color:var(--text-secondary); margin-top:4px; margin-bottom:20px; line-height:1.6;">
-        4Task mengubah taskbar jadi bisa disembunyikan. Klik panah kecil di atas taskbar untuk memunculkan atau menyembunyikannya, lengkap dengan animasi pop-up.
+        4Task membuat taskbar auto-hide. Saat aktif, taskbar sembunyi sendiri dan hanya muncul lagi kalau kursor kamu mendekati dasar layar.
       </div>
 
       <div style="display:flex; align-items:center; gap:14px; padding:16px 18px; border:1px solid var(--taskbar-border); border-radius:12px; margin-bottom:16px;">
-        <div style="font-size:24px;">${hidden ? "🙈" : "👁️"}</div>
+        <div style="font-size:24px;">${autoHide ? "🙈" : "📌"}</div>
         <div style="flex:1;">
-          <div style="font-size:13px; font-weight:600;">Status taskbar</div>
-          <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">${hidden ? "Sedang disembunyikan" : "Sedang ditampilkan"}</div>
+          <div style="font-size:13px; font-weight:600;">Auto-hide taskbar</div>
+          <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">${autoHide ? "Aktif — taskbar sembunyi otomatis" : "Nonaktif — taskbar selalu terlihat"}</div>
         </div>
         <button id="ft-toggle-btn" style="padding:8px 16px; border-radius:999px; border:none; font-size:11.5px; font-weight:600; cursor:pointer; background:var(--accent); color:#08202b;">
-          ${hidden ? "Tampilkan" : "Sembunyikan"}
+          ${autoHide ? "Matikan" : "Aktifkan"}
         </button>
       </div>
 
       <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.8;">
-        <div>💡 Panah ada tepat di atas taskbar, di tengah bawah layar.</div>
-        <div>💡 Saat taskbar disembunyikan, hanya panah kecil yang terlihat.</div>
-        <div>💡 Saat dimunculkan lagi, taskbar pop-up dari bawah dan tiap item taskbar muncul berurutan dari kiri ke kanan.</div>
+        <div>💡 Dekatkan kursor ke tepi bawah layar untuk memunculkan taskbar.</div>
+        <div>💡 Taskbar sembunyi lagi begitu kursor menjauh.</div>
+        <div>💡 Taskbar pop-up dari bawah dan tiap item muncul berurutan dari kiri ke kanan.</div>
       </div>
     </div>
   `;
   body.querySelector("#ft-toggle-btn").addEventListener("click", () => {
-    toggleTaskbarVisibility();
-    setTimeout(() => renderFourTaskApp(body), 60);
+    setTaskbarAutoHide(!OS.settings.taskbarAutoHide);
+    renderFourTaskApp(body);
   });
 }
 
