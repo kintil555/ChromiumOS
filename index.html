@@ -422,7 +422,10 @@ const OS = {
     searchPos: null, // {top,left} custom
     desktopWidgets: [], // { id, type: 'clock-digital'|'clock-analog'|'weather', x, y }
     installedApps: {}, // appId -> true, apps installed via BrowStore
-    currentBuildId: "25h1" // id dari OS.buildHistory yang sedang aktif — diubah oleh PyPatcher/Update
+    currentBuildId: "25h1", // id dari OS.buildHistory yang sedang aktif — diubah oleh PyPatcher/Update
+    tweaks: {
+      updateVersionSwitcherInjected: false // true jika PyPatcher sudah "inject" opsi pilih versi ke Settings > Update
+    }
   },
   apps: [
     { id:"browser", name:"Chromium Browser", icon:"🌐", pinned:true },
@@ -1519,6 +1522,7 @@ const SETTINGS_SECTIONS = [
 
 function renderSettingsApp(body, activeSection){
   activeSection = activeSection || "display";
+  body.dataset.activeSec = activeSection;
   body.innerHTML = `
     <div style="display:flex; height:100%;">
       <div style="width:190px; border-right:1px solid var(--taskbar-border); padding:16px 8px; flex-shrink:0;">
@@ -1748,6 +1752,8 @@ function renderUpdateSettings(content){
   const current = getCurrentBuild();
   const latest = OS.buildHistory[OS.buildHistory.length - 1];
   const isLatest = current.id === latest.id;
+  const injected = !!OS.settings.tweaks.updateVersionSwitcherInjected;
+  const otherBuilds = OS.buildHistory.filter(b => b.id !== current.id);
 
   content.innerHTML = `
     <h2 style="margin:0 0 4px;">Update</h2>
@@ -1787,6 +1793,33 @@ function renderUpdateSettings(content){
         `}
       </div>
     </div>
+
+    ${injected ? `
+      <div style="margin-top:18px; border:1px solid var(--accent); border-radius:14px; padding:20px; background:rgba(76,194,255,0.06);">
+        <div style="display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:600;">
+          <span>🧬</span><span>Opsi Lanjutan</span>
+          <span style="font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.03em; padding:2px 7px; border-radius:999px; background:rgba(76,194,255,0.18); color:var(--accent);">via PyPatcher</span>
+        </div>
+        <div style="font-size:11px; color:var(--text-secondary); margin-top:4px; margin-bottom:14px;">Berpindah ke build sistem manapun (upgrade atau downgrade).</div>
+
+        <select id="sel-update-build-adv" style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--taskbar-border); background:var(--window-bg); color:var(--text-primary); font-size:12.5px; outline:none;">
+          ${otherBuilds.map(b => `<option value="${b.id}">${b.label}</option>`).join("")}
+        </select>
+
+        <div id="adv-update-changelog" style="margin-top:12px; font-size:11.5px; color:var(--text-secondary); line-height:1.8;"></div>
+
+        <div id="adv-update-progress-wrap" style="display:none; margin-top:14px;">
+          <div style="height:8px; border-radius:6px; background:rgba(128,128,128,0.2); overflow:hidden;">
+            <div id="adv-update-progress-bar" style="height:100%; width:0%; background:var(--accent); transition:width 0.3s linear;"></div>
+          </div>
+          <div id="adv-update-progress-label" style="font-size:11.5px; color:var(--text-secondary); margin-top:8px;"></div>
+        </div>
+
+        <button id="btn-install-update-adv" style="margin-top:14px; width:100%; padding:11px; border:none; border-radius:10px; background:var(--accent); color:#08202b; font-weight:600; font-size:13px; cursor:pointer;">
+          Patch ke build terpilih
+        </button>
+      </div>
+    ` : ""}
   `;
 
   const checkBtn = content.querySelector("#btn-check-update");
@@ -1806,6 +1839,35 @@ function renderUpdateSettings(content){
   if(installBtn){
     installBtn.addEventListener("click", () => {
       runUpdateGimmick(content, latest.id);
+    });
+  }
+
+  // ---- Opsi lanjutan (hanya ada jika sudah di-inject via PyPatcher) ----
+  const advSelect = content.querySelector("#sel-update-build-adv");
+  if(advSelect){
+    const advChangelogBox = content.querySelector("#adv-update-changelog");
+    function renderAdvChangelogFor(targetId){
+      const targetIdx = OS.buildHistory.findIndex(b => b.id === targetId);
+      const currentIdx = OS.buildHistory.findIndex(b => b.id === current.id);
+      const isUpgrade = targetIdx > currentIdx;
+      if(isUpgrade){
+        let items = [];
+        for(let i = currentIdx + 1; i <= targetIdx; i++){
+          items = items.concat(BUILD_CHANGELOG[OS.buildHistory[i].id] || []);
+        }
+        advChangelogBox.innerHTML = `<div style="font-weight:600; color:var(--text-primary); margin-bottom:4px;">Yang baru jika upgrade:</div>` +
+          `<ul style="margin:0; padding-left:18px;">${items.map(i => `<li>${i}</li>`).join("")}</ul>`;
+      } else {
+        advChangelogBox.innerHTML = `<div style="padding:10px 12px; border-radius:10px; background:rgba(250,204,21,0.12); border:1px solid rgba(250,204,21,0.35); color:var(--text-primary);">
+          ⚠️ Ini adalah downgrade. Beberapa fitur yang sudah aktif saat ini bisa jadi tidak tersedia lagi di build tersebut.
+        </div>`;
+      }
+    }
+    renderAdvChangelogFor(advSelect.value);
+    advSelect.addEventListener("change", () => renderAdvChangelogFor(advSelect.value));
+
+    content.querySelector("#btn-install-update-adv").addEventListener("click", () => {
+      runAdvancedPatchGimmick(content, advSelect.value);
     });
   }
 }
@@ -1853,6 +1915,51 @@ function runUpdateGimmick(content, targetBuildId){
           }, 2000);
         }, 700);
       };
+    }
+  }, stepMs);
+}
+
+// Sama seperti runUpdateGimmick, tapi untuk section "Opsi Lanjutan" (hasil inject PyPatcher)
+// yang bisa upgrade ATAU downgrade ke build manapun, bukan hanya ke versi terbaru.
+function runAdvancedPatchGimmick(content, targetBuildId){
+  const target = OS.buildHistory.find(b => b.id === targetBuildId);
+  if(!target) return;
+
+  const btn = content.querySelector("#btn-install-update-adv");
+  const select = content.querySelector("#sel-update-build-adv");
+  const wrap = content.querySelector("#adv-update-progress-wrap");
+  const bar = content.querySelector("#adv-update-progress-bar");
+  const label = content.querySelector("#adv-update-progress-label");
+
+  btn.disabled = true;
+  select.disabled = true;
+  btn.style.opacity = "0.5";
+  btn.textContent = "Mem-patch...";
+  wrap.style.display = "block";
+
+  const totalMs = 8000;
+  const stepMs = 150;
+  let elapsed = 0;
+
+  toast("PyPatcher", `Mem-patch sistem ke ${target.version}...`, "🛠️", 3000);
+
+  const timer = setInterval(() => {
+    elapsed += stepMs;
+    const pct = Math.min(100, Math.round((elapsed / totalMs) * 100));
+    bar.style.width = pct + "%";
+    label.textContent = `Mem-patch ke ${target.version}... ${pct}%`;
+
+    if(pct >= 100){
+      clearInterval(timer);
+      label.textContent = "Selesai. Merestart sistem...";
+      OS.settings.currentBuildId = target.id;
+      saveSettings();
+      setTimeout(() => {
+        rebootOS();
+        setTimeout(() => {
+          toast("Patch selesai", `Sistem kini berjalan di ${target.version}.`, "✅", 5000);
+        }, 2000);
+      }, 700);
     }
   }, stepMs);
 }
@@ -2763,6 +2870,7 @@ function openPyPatcher(){
 
 function renderPyPatcherBody(body){
   const current = getCurrentBuild();
+  const injected = !!OS.settings.tweaks.updateVersionSwitcherInjected;
   body.innerHTML = `
     <div style="padding:24px 28px; height:100%; overflow:auto;">
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
@@ -2799,6 +2907,21 @@ function renderPyPatcherBody(body){
         `).join("")}
       </div>
 
+      <div style="margin-top:24px; font-size:12.5px; font-weight:600; color:var(--text-secondary);">Tweak & Inject</div>
+      <div style="margin-top:10px; display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 16px; border-radius:12px; border:1px solid var(--taskbar-border); ${injected ? 'background:rgba(76,194,255,0.08); border-color:var(--accent);' : ''}">
+        <div>
+          <div style="font-size:12.5px; font-weight:600;">Pemilih versi di menu Update</div>
+          <div style="font-size:11px; color:var(--text-secondary); margin-top:3px; line-height:1.5;">
+            ${injected
+              ? "Ter-inject. Settings → Update kini menampilkan opsi untuk berpindah ke build manapun."
+              : "Suntikkan opsi tersembunyi ke Settings → Update, agar bisa upgrade/downgrade ke build manapun langsung dari sana."}
+          </div>
+        </div>
+        <button id="pypatcher-inject-btn" style="flex-shrink:0; padding:8px 16px; border-radius:999px; border:none; font-size:11.5px; font-weight:600; cursor:pointer; ${injected ? 'background:rgba(229,72,77,0.15); color:#e5484d;' : 'background:var(--accent); color:#08202b;'}">
+          ${injected ? "Hapus injection" : "Inject"}
+        </button>
+      </div>
+
       <div style="margin-top:20px; font-size:11px; color:var(--text-secondary); line-height:1.6;">
         Catatan: berpindah ke build lama dapat menonaktifkan fitur yang belum tersedia di build tersebut (mis. BrowStore, wallpaper custom, widget desktop).
       </div>
@@ -2811,6 +2934,27 @@ function renderPyPatcherBody(body){
       if(targetId === OS.settings.currentBuildId) return;
       runPyPatcherPatch(body, targetId);
     });
+  });
+
+  body.querySelector("#pypatcher-inject-btn").addEventListener("click", () => {
+    const nowInjected = !OS.settings.tweaks.updateVersionSwitcherInjected;
+    OS.settings.tweaks.updateVersionSwitcherInjected = nowInjected;
+    saveSettings();
+    toast(
+      nowInjected ? "Injection berhasil" : "Injection dihapus",
+      nowInjected ? "Menu Update kini punya opsi pilih versi." : "Menu Update kembali ke tampilan normal.",
+      nowInjected ? "🧬" : "🧹",
+      3200
+    );
+    renderPyPatcherBody(body);
+    // jika Settings sedang terbuka di halaman Update, refresh langsung supaya efeknya terlihat real-time
+    const settingsWin = Object.values(OS.windows).find(w => w.appId === "settings" && !w.closed);
+    if(settingsWin){
+      const settingsBody = settingsWin.el.querySelector(".win-body");
+      if(settingsBody && settingsBody.dataset.activeSec === "update"){
+        renderUpdateSettings(settingsBody.querySelector("#settings-content"));
+      }
+    }
   });
 }
 
